@@ -4,9 +4,12 @@
 > `portus`: una librería HTTP para PenguScript, al estilo Express/Hono,
 > instalable con `psc add`.
 >
-> **Estado:** decisiones **aprobadas el 2026-11-04**. Desarrollo en curso por
-> F0 (compilador, paquete, transporte C). Lo que se pospone vive en
-> [`portus-deferred.md`](portus-deferred.md).
+> **Estado:** decisiones **aprobadas el 2026-11-04**. **F0–F6 cerradas**:
+> portus 0.1.0 está commiteado y etiquetado (`v0.1.0`), con 23 ejemplos, 42
+> tests y tres gates e2e verdes. Requiere **PenguScript ≥ 0.28.9**. Lo que se
+> pospone vive en [`portus-deferred.md`](portus-deferred.md) y los bugs del
+> compilador que siguen abiertos, con sus workarounds, en
+> [`portus-compiler-fixes.md`](portus-compiler-fixes.md).
 >
 > Lectura: 5 minutos aquí; el resto está enlazado.
 
