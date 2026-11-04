@@ -31,6 +31,9 @@ import portus.error
 import portus.handler as handler_module
 import portus.middleware as middleware_module
 import portus.route as route_module
+import portus.static_file as static_module
+import portus.compress as compress_module
+import portus.negotiation as negotiation_module
 import portus.transport as transport
 
 alias Application as application_module.Application
@@ -178,5 +181,22 @@ weave use_logger with app as ref to Application into void:
     return calling middleware_module.add_logger with app
 
 ## Ping del binding nativo (humo de instalación).
+## Negociación: `true` si el cliente acepta `media_type`.
+weave accepts with context as ref to context_module.Context, media_type as string into bool:
+    return calling negotiation_module.accepts with context, media_type
+
+## Negociación: mejor tipo de `offered`, o `none`.
+weave best with context as ref to context_module.Context, offered as list of string into maybe string:
+    return calling negotiation_module.best with context, offered
+
+## Comprime con gzip las respuestas que lo acepten.
+weave use_compress with app as ref to application_module.Application into void:
+    calling application_module.after with app, (calling handler_module.middleware_with with compress_module._compress, (transmute 0 to ref to void))
+    return
+
+## Sirve `root` bajo `prefix` (`"/static"`; `""` para la raíz).
+weave mount_static with app as ref to application_module.Application, prefix as string, root as string into result of void to route_module.PatternError:
+    return calling static_module.mount with app, prefix, root
+
 weave ping with n as int into int:
     return calling transport.native_ping with n

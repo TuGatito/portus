@@ -276,10 +276,24 @@ F2 — **en curso**. Hecho:
   `add_cors`, `add_logger` (con `application.middleware_with` para configuración).
 - Nativo: `portus_native_random_hex`, `portus_native_request_id`,
   `portus_native_now_ms` (para `X-Request-Id` y duración del logger).
-- Tests: 30 (`psc test`), e2e ampliado (JSON, cookies, request-id, cabeceras de
-  seguridad y preflight CORS) y ejemplo `examples/cookies-and-json`.
-Pendiente de F2: estáticos con MIME/ETag/Range, compresión (gzip/deflate),
-negociación de contenido, sesiones firmadas.
+- Estáticos: `portus.static_file.mount` (y `portus.mount_static`) sirve un
+  directorio con MIME por extensión (`portus.mime`), `ETag`, `Last-Modified`,
+  `If-None-Match` (304), `Range: bytes=a-b` (206 + `Content-Range`) y rechazo de
+  rutas con `..` o absolutas.
+- Compresión: `portus.use_compress` (finisher gzip si el cliente lo acepta, el
+  tipo es compresible y el cuerpo pasa de 860 bytes).
+- Negociación: `portus.best` / `portus.accepts` sobre el `Accept` con `q=`.
+- Streaming: `context.sse_open` / `sse_send` / `sse_close` y
+  `stream_begin` / `stream_write` / `stream_end`, con `Transfer-Encoding: chunked`.
+- Handlers gruesos en rutas: `application.add_thick` + `RouteEntry{handler,
+  invoke, data, is_thick}` para que los estáticos (y lo que venga) lleven
+  configuración sin closures.
+- Tests: 34 (`psc test`), e2e ampliado (JSON, cookies, request-id, cabeceras de
+  seguridad, preflight CORS, estáticos con ETag/Range, gzip, negociación y SSE)
+  y ejemplo `examples/cookies-and-json`.
+Pendiente de F2: nada bloqueante; sesiones firmadas se difieren a F4 (necesitan
+`HMAC-SHA256` de `std.digest` y un `Set-Cookie` firmado que ya cabe en
+`portus.cookie`).
 
 ---
 
@@ -299,6 +313,14 @@ portus/
 │       ├── handler.pengu       # Handler, Middleware, ok_void/err_void
 │       ├── context.pengu       # Context y sus métodos
 │       ├── group.pengu         # Group (prefijo de rutas)
+│       ├── text.pengu          # puente de strings desde C
+│       ├── query.pengu         # query string
+│       ├── cookie.pengu        # cookies y Set-Cookie
+│       ├── middleware.pengu    # request-id, seguridad, CORS, logger
+│       ├── mime.pengu          # extensión -> Content-Type
+│       ├── static_file.pengu   # estáticos con ETag/Last-Modified/Range
+│       ├── compress.pengu      # gzip de respuesta (finisher)
+│       ├── negotiation.pengu   # Accept / q=
 │       └── application.pengu   # Application, dispatch, serve
 ├── include/
 │   ├── portus_native.h         # servidor poll(2) + llhttp, header-only

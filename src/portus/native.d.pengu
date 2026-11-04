@@ -20,6 +20,7 @@ declare portus_native_last_error into ref to frozen char
 declare portus_native_random_hex with out as ref to byte, bytes as int into int
 declare portus_native_now_ms into long
 declare portus_native_request_id into ref to frozen char
+declare portus_native_file_info with path as ref to frozen byte, path_length as int, out_size as ref to long, out_mtime as ref to long into int
 
 # --- Servidor -------------------------------------------------------------
 
@@ -44,4 +45,10 @@ declare portus_native_response_set_status with response as ref to portus_respons
 declare portus_native_response_write_bytes with response as ref to portus_response_t, data as ref to frozen byte, length as int into void
 declare portus_native_response_header_bytes with response as ref to portus_response_t, name as ref to frozen byte, name_length as int, value as ref to frozen byte, value_length as int into void
 declare portus_native_response_mark_sent with response as ref to portus_response_t into void
+declare portus_native_response_body with response as ref to portus_response_t, out_length as ref to int into ref to frozen byte
+declare portus_native_response_set_body with response as ref to portus_response_t, data as ref to frozen byte, data_length as int into void
+declare portus_native_response_header_value with response as ref to portus_response_t, name as ref to frozen byte, name_length as int, out_length as ref to int into ref to frozen byte
+declare portus_native_response_stream_begin with response as ref to portus_response_t, content_type as ref to frozen byte, content_type_length as int into int
+declare portus_native_response_stream_write with response as ref to portus_response_t, data as ref to frozen byte, data_length as int into int
+declare portus_native_response_stream_end with response as ref to portus_response_t into int
 declare portus_native_response_status with response as ref to portus_response_t into int

@@ -141,6 +141,21 @@ enchanting Response:
         calling native.portus_native_response_mark_sent with self->_raw
 
     ## Código de estado actual.
+    ## Empieza una respuesta en streaming con `content_type`.
+    weave stream_begin with content_type as string into bool:
+        var ok as int is calling native.portus_native_response_stream_begin with self->_raw, (bytes of content_type), content_type.len
+        return ok == 0
+
+    ## Escribe un trozo de texto en la respuesta en streaming.
+    weave stream_write_text with text as string into bool:
+        var ok as int is calling native.portus_native_response_stream_write with self->_raw, (bytes of text), text.len
+        return ok == 0
+
+    ## Cierra la respuesta en streaming.
+    weave stream_end into bool:
+        var ok as int is calling native.portus_native_response_stream_end with self->_raw
+        return ok == 0
+
     weave status into int:
         return calling native.portus_native_response_status with self->_raw
 

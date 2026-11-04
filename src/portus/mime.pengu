@@ -1,0 +1,83 @@
+## portus.mime — tipo de contenido por extensión.
+##
+## Tabla pequeña y explícita; el resto cae en `application/octet-stream`. No
+## consulta el sistema de ficheros ni `/etc/mime.types`.
+import std.scrolls
+
+## Tipo de contenido para `path` (mira solo la extensión).
+##
+## ## Memoria
+## Devuelve un literal prestado; no lo banishes.
+weave for_path with path as string into string:
+    var dot as int is calling _last_dot with path
+    if dot < 0:
+        return "application/octet-stream"
+    var ext as string is calling scrolls.substring with path, dot + 1, path.len
+    var lower as string is calling scrolls.to_lower with ext
+    banish ext
+    var found as string is calling _lookup with lower
+    banish lower
+    return found
+
+## Posición del último `.` del nombre, o -1.
+weave _last_dot with path as string into int:
+    var i as int is path.len - 1
+    while i >= 0:
+        if (path at i) == ".":
+            return i
+        if (path at i) == "/":
+            return -1
+        set i is i - 1
+    return -1
+
+## Tabla de extensiones.
+weave _lookup with ext as string into string:
+    if ext == "html" or ext == "htm":
+        return "text/html; charset=utf-8"
+    if ext == "css":
+        return "text/css; charset=utf-8"
+    if ext == "js" or ext == "mjs":
+        return "text/javascript; charset=utf-8"
+    if ext == "json":
+        return "application/json; charset=utf-8"
+    if ext == "txt" or ext == "md":
+        return "text/plain; charset=utf-8"
+    if ext == "xml":
+        return "application/xml; charset=utf-8"
+    if ext == "csv":
+        return "text/csv; charset=utf-8"
+    if ext == "svg":
+        return "image/svg+xml"
+    if ext == "png":
+        return "image/png"
+    if ext == "jpg" or ext == "jpeg":
+        return "image/jpeg"
+    if ext == "gif":
+        return "image/gif"
+    if ext == "webp":
+        return "image/webp"
+    if ext == "ico":
+        return "image/x-icon"
+    if ext == "woff":
+        return "font/woff"
+    if ext == "woff2":
+        return "font/woff2"
+    if ext == "ttf":
+        return "font/ttf"
+    if ext == "otf":
+        return "font/otf"
+    if ext == "pdf":
+        return "application/pdf"
+    if ext == "wasm":
+        return "application/wasm"
+    if ext == "mp4":
+        return "video/mp4"
+    if ext == "webm":
+        return "video/webm"
+    if ext == "mp3":
+        return "audio/mpeg"
+    if ext == "ogg":
+        return "audio/ogg"
+    if ext == "zip":
+        return "application/zip"
+    return "application/octet-stream"

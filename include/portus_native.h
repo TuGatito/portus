@@ -41,6 +41,7 @@
 #include <signal.h>
 #include <strings.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -113,6 +114,9 @@ struct portus_response {
     size_t header_cap;
     portus_buffer body;
     int sent;
+    struct portus_conn *conn;
+    int streaming;
+    int stream_ended;
 };
 
 /* Los punteros se declaran como `void *` a propósito: así el binding de
@@ -143,7 +147,10 @@ typedef struct portus_conn {
     size_t out_written;
 } portus_conn;
 
-typedef struct portus_server {
+/* Adelanto: el streaming necesita vaciar la conexión. */
+static int portus_conn_flush(portus_conn *c);
+
+struct portus_server {
     int listen_fd;
     int max_connections;
     int max_header_bytes;
@@ -154,6 +161,8 @@ typedef struct portus_server {
     unsigned long long started_ms;
     struct portus_conn *connections;
 } portus_server;
+
+typedef struct portus_server portus_server_t;
 
 /* ------------------------------------------------------------------ */
 /* Buffers                                                             */
@@ -653,6 +662,97 @@ static PORTUS_MAYBE_UNUSED int portus_response_serialize(struct portus_response 
     return PORTUS_NATIVE_OK;
 }
 
+
+/* ------------------------------------------------------------------ */
+/* Streaming / SSE                                                     */
+/* ------------------------------------------------------------------ */
+
+/* Empieza una respuesta en streaming (chunked). Devuelve 0 o -1. */
+static PORTUS_MAYBE_UNUSED int portus_native_response_stream_begin(void *res,
+                                                                  const unsigned char *content_type,
+                                                                  int content_type_len) {
+    struct portus_response *r = (struct portus_response *)res;
+    portus_conn *c = r->conn;
+    char date[64];
+    if (c == NULL || r->streaming) {
+        return -1;
+    }
+    r->status = 200;
+    r->sent = 1;
+    r->streaming = 1;
+    r->stream_ended = 0;
+    portus_response_set_header(r, "Content-Type", 12, (const char *)content_type,
+                               (size_t)content_type_len);
+    portus_response_set_header(r, "Cache-Control", 13, "no-cache", 8);
+    portus_buf_clear(&c->out);
+    if (portus_buf_append_str(&c->out, "HTTP/1.1 200 OK\r\n") != PORTUS_NATIVE_OK) {
+        return -1;
+    }
+    {
+        size_t i;
+        for (i = 0; i < r->header_count; i++) {
+            if (portus_buf_append_str(&c->out, r->headers[i].name) != PORTUS_NATIVE_OK ||
+                portus_buf_append_str(&c->out, ": ") != PORTUS_NATIVE_OK ||
+                portus_buf_append_str(&c->out, r->headers[i].value) != PORTUS_NATIVE_OK ||
+                portus_buf_append_str(&c->out, "\r\n") != PORTUS_NATIVE_OK) {
+                return -1;
+            }
+        }
+    }
+    if (portus_http_date(date, sizeof(date)) == PORTUS_NATIVE_OK) {
+        if (portus_buf_append_str(&c->out, "Date: ") != PORTUS_NATIVE_OK ||
+            portus_buf_append_str(&c->out, date) != PORTUS_NATIVE_OK ||
+            portus_buf_append_str(&c->out, "\r\n") != PORTUS_NATIVE_OK) {
+            return -1;
+        }
+    }
+    if (portus_buf_append_str(&c->out, "Transfer-Encoding: chunked\r\n") != PORTUS_NATIVE_OK ||
+        portus_buf_append_str(&c->out, "Connection: keep-alive\r\n\r\n") != PORTUS_NATIVE_OK) {
+        return -1;
+    }
+    (void)portus_conn_flush(c);
+    return 0;
+}
+
+/* Escribe un trozo de streaming como un chunk. Devuelve 0 o -1. */
+static PORTUS_MAYBE_UNUSED int portus_native_response_stream_write(void *res,
+                                                                  const unsigned char *data,
+                                                                  int len) {
+    struct portus_response *r = (struct portus_response *)res;
+    portus_conn *c = r->conn;
+    char head[32];
+    if (c == NULL || !r->streaming || len < 0) {
+        return -1;
+    }
+    if (len == 0) {
+        return 0;
+    }
+    snprintf(head, sizeof(head), "%zx\r\n", (size_t)len);
+    if (portus_buf_append_str(&c->out, head) != PORTUS_NATIVE_OK ||
+        portus_buf_append(&c->out, data, (size_t)len) != PORTUS_NATIVE_OK ||
+        portus_buf_append_str(&c->out, "\r\n") != PORTUS_NATIVE_OK) {
+        return -1;
+    }
+    (void)portus_conn_flush(c);
+    return 0;
+}
+
+/* Termina el streaming con el chunk final. Devuelve 0 o -1. */
+static PORTUS_MAYBE_UNUSED int portus_native_response_stream_end(void *res) {
+    struct portus_response *r = (struct portus_response *)res;
+    portus_conn *c = r->conn;
+    if (c == NULL || !r->streaming) {
+        return -1;
+    }
+    if (portus_buf_append_str(&c->out, "0\r\n\r\n") != PORTUS_NATIVE_OK) {
+        return -1;
+    }
+    r->streaming = 0;
+    r->stream_ended = 1;
+    (void)portus_conn_flush(c);
+    return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Conexiones                                                          */
 /* ------------------------------------------------------------------ */
@@ -805,7 +905,14 @@ static PORTUS_MAYBE_UNUSED void portus_dispatch(portus_conn *c, portus_handler_f
                             portus_buffer *scratch) {
     portus_response_clear(&c->response);
     c->response.status = 200;
+    c->response.conn = c;
     handler(userdata, (void *)&c->request, (void *)&c->response);
+    if (c->response.streaming) {
+        if (!c->response.stream_ended) {
+            c->close_after_write = 1;
+        }
+        return;
+    }
     if (!c->response.sent) {
         portus_fail(c, 500, "el handler no respondió", scratch);
         return;
@@ -930,7 +1037,7 @@ static PORTUS_MAYBE_UNUSED int portus_conn_flush(portus_conn *c) {
     return 1;
 }
 
-static PORTUS_MAYBE_UNUSED int portus_accept_ready(portus_server *srv) {
+static PORTUS_MAYBE_UNUSED int portus_accept_ready(portus_server_t *srv) {
 #if defined(PORTUS_NATIVE_WINDOWS)
     return PORTUS_NATIVE_ERR;
 #else
@@ -991,7 +1098,7 @@ static PORTUS_MAYBE_UNUSED int portus_native_serve(const unsigned char *host, in
     portus_last_error_text = "portus no soporta Windows todavía";
     return PORTUS_ERR_PLATFORM;
 #else
-    portus_server srv;
+    portus_server_t srv;
     struct pollfd *fds = NULL;
     portus_buffer scratch;
     const char *host_c = (const char *)host;
@@ -1255,6 +1362,44 @@ static PORTUS_MAYBE_UNUSED void portus_native_response_header_bytes(struct portu
                                (const char *)value, (size_t)value_len);
 }
 
+
+/* Copia el cuerpo de la respuesta a `out`; devuelve cuántos bytes caben. */
+static PORTUS_MAYBE_UNUSED const unsigned char *portus_native_response_body(const void *res, int *out_len) {
+    const struct portus_response *r = (const struct portus_response *)res;
+    if (out_len != NULL) {
+        *out_len = (int)r->body.len;
+    }
+    return (const unsigned char *)r->body.data;
+}
+
+/* Reemplaza el cuerpo de la respuesta (copia `len` bytes). */
+static PORTUS_MAYBE_UNUSED void portus_native_response_set_body(void *res, const unsigned char *data, int len) {
+    struct portus_response *r = (struct portus_response *)res;
+    r->body.len = 0;
+    if (len > 0 && data != NULL) {
+        portus_buf_append(&r->body, data, (size_t)len);
+    }
+}
+
+/* Valor de una cabecera de la respuesta, o NULL. */
+static PORTUS_MAYBE_UNUSED const unsigned char *portus_native_response_header_value(const void *res,
+                                                                                  const unsigned char *name,
+                                                                                  int name_len,
+                                                                                  int *out_len) {
+    const struct portus_response *r = (const struct portus_response *)res;
+    size_t i;
+    for (i = 0; i < r->header_count; i++) {
+        if ((int)r->headers[i].name_len == name_len &&
+            memcmp(r->headers[i].name, name, (size_t)name_len) == 0) {
+            if (out_len != NULL) {
+                *out_len = (int)r->headers[i].value_len;
+            }
+            return (const unsigned char *)r->headers[i].value;
+        }
+    }
+    return NULL;
+}
+
 static PORTUS_MAYBE_UNUSED void portus_native_response_mark_sent(struct portus_response *res) {
     res->sent = 1;
 }
@@ -1306,6 +1451,32 @@ static PORTUS_MAYBE_UNUSED const char *portus_native_request_id(void) {
         return NULL;
     }
     return id;
+}
+
+
+/* Tamaño y mtime (segundos Unix) de un fichero regular.
+ * Devuelve 0 si existe, -1 si no. `path` no necesita terminador. */
+static PORTUS_MAYBE_UNUSED int portus_native_file_info(const unsigned char *path,
+                                                     int path_len,
+                                                     int64_t *out_size,
+                                                     int64_t *out_mtime) {
+    char buf[4096];
+    struct stat st;
+    if (path == NULL || path_len <= 0 || path_len >= (int)sizeof(buf)) {
+        return -1;
+    }
+    memcpy(buf, path, (size_t)path_len);
+    buf[path_len] = 0;
+    if (stat(buf, &st) != 0 || !S_ISREG(st.st_mode)) {
+        return -1;
+    }
+    if (out_size != NULL) {
+        *out_size = (int64_t)st.st_size;
+    }
+    if (out_mtime != NULL) {
+        *out_mtime = (int64_t)st.st_mtime;
+    }
+    return 0;
 }
 
 /* Milisegundos monótonos desde un origen arbitrario. */

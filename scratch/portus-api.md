@@ -865,3 +865,47 @@ Módulos nuevos:
 Fachada: `use_request_id`, `use_security_headers`, `use_cors(app, origin)`,
 `use_logger`, y `handler.middleware_with(invoke, data)` para middlewares con
 configuración.
+
+## F2 — estáticos, compresión, negociación y streaming (implementado)
+
+```pengu
+# application
+weave add_thick with app as ref to Application, method as string, pattern as string, invoke as MiddlewareFn, data as ref to void into result of void to route.PatternError
+
+# portus.static_file
+weave mount with app as ref to Application, prefix as string, root as string into result of void to route.PatternError
+
+# portus.mime
+weave for_path with path as string into string
+
+# fachada
+weave use_compress with app as ref to Application into void
+weave mount_static with app as ref to Application, prefix as string, root as string into result of void to route.PatternError
+weave accepts with context as ref to Context, media_type as string into bool
+weave best with context as ref to Context, offered as list of string into maybe string
+
+# Context
+weave sse_open into bool
+weave sse_send with event as string, data as string into bool
+weave sse_close into bool
+weave stream_begin with content_type as string into bool
+weave stream_write with text as string into bool
+weave stream_end into bool
+weave mark_sent into void
+
+# transport.Response
+weave stream_begin with content_type as string into bool
+weave stream_write_text with text as string into bool
+weave stream_end into bool
+```
+
+Nativo añadido: `portus_native_response_body`, `portus_native_response_set_body`,
+`portus_native_response_header_value`, `portus_native_response_stream_begin`,
+`portus_native_response_stream_write`, `portus_native_response_stream_end`,
+`portus_native_file_info` (tamaño y mtime para `ETag`/`Last-Modified`).
+
+Comportamiento de los estáticos: `GET /static/*file`; `..` o rutas absolutas →
+404; `index.html` cuando el comodín viene vacío; `ETag` = `"tamaño-mtime"`;
+`If-None-Match` → 304; `Range: bytes=a-b` → 206 con `Content-Range`, rango
+inválido → 416. `use_compress` es un finisher: `Accept-Encoding` con gzip,
+cuerpo ≥ 860 bytes y tipo compresible.

@@ -1,0 +1,104 @@
+## portus.compress — comprime la respuesta con gzip si el cliente lo acepta.
+##
+## `use_compress(app)` registra un *finisher*: cuando el handler ya escribió,
+## mira `Accept-Encoding`, el `Content-Type` y el tamaño, comprime el cuerpo y
+## añade `Content-Encoding: gzip`. No toca imágenes, vídeo, `application/zip`
+## ni respuestas de menos de 860 bytes.
+##
+## ## Ejemplo
+## ```pengu
+## calling portus.use_compress with sigil of app
+## ```
+import std.compressus
+import std.scrolls
+import portus.application as application_module
+import portus.context as context_module
+import portus.handler as handler_module
+import portus.native as native_module
+import portus.text as text
+import portus.transport as transport
+
+## Tamaño mínimo para que compense comprimir.
+const MIN_BYTES as int is 860
+
+## Compresión en el *finisher*.
+weave _compress with data as ref to void, ctx as ref to context_module.Context into result of void to HttpError:
+    if not calling ctx.is_sent:
+        return calling handler_module.ok_void
+    var response as ref to transport.Response is ctx->response
+    let already as maybe string is calling _response_header with response, "Content-Encoding"
+    if already.is_present:
+        return calling handler_module.ok_void
+    var accepted as bool is calling _accepts_gzip with ctx
+    if not accepted:
+        return calling handler_module.ok_void
+    var length as int is 0
+    let body_ptr as ref to frozen byte is calling native_module.portus_native_response_body with response->_raw, (sigil of length)
+    if length < MIN_BYTES:
+        return calling handler_module.ok_void
+    var content_type as string is calling _content_type with response
+    if not calling _is_compressible with content_type:
+        banish content_type
+        return calling handler_module.ok_void
+    if body_ptr == transmute 0 to ref to frozen byte:
+        banish content_type
+        return calling handler_module.ok_void
+    var raw as string is calling text.from_bytes with body_ptr, length
+    var packed as result of string to compressus.CompressError is calling compressus.gzip_compress with raw, compressus.CompressionLevel.Default
+    banish raw
+    var gz as string is packed or:
+        banish content_type
+        return calling handler_module.ok_void
+    calling native_module.portus_native_response_set_body with response->_raw, (bytes of gz), gz.len
+    var ce_name as string is "Content-Encoding"
+    var ce_value as string is "gzip"
+    calling native_module.portus_native_response_header_bytes with response->_raw, (bytes of ce_name), ce_name.len, (bytes of ce_value), ce_value.len
+    banish ce_name
+    banish ce_value
+    banish gz
+    banish content_type
+    return calling handler_module.ok_void
+
+## `true` si el `Accept-Encoding` de la petición incluye gzip.
+weave _accepts_gzip with ctx as ref to context_module.Context into bool:
+    let raw as maybe string is calling ctx.header with "Accept-Encoding"
+    if header as string is raw:
+        var lower as string is calling scrolls.to_lower with header
+        banish header
+        var ok as bool is calling scrolls.contains with lower, "gzip"
+        banish lower
+        return ok
+    return false
+
+## `Content-Type` de la respuesta (vacío si no hay).
+weave _content_type with response as ref to transport.Response into string:
+    let found as maybe string is calling _response_header with response, "Content-Type"
+    if value as string is found:
+        var copy as string is "{value}"
+        banish value
+        return copy
+    return ""
+
+## Valor de una cabecera de la respuesta.
+weave _response_header with response as ref to transport.Response, name as string into maybe string:
+    var length as int is 0
+    let ptr as ref to frozen byte is calling native_module.portus_native_response_header_value with response->_raw, (bytes of name), name.len, (sigil of length)
+    if ptr == transmute 0 to ref to frozen byte:
+        return maybe none
+    return some (calling text.from_bytes with ptr, length)
+
+## `true` si merece la pena comprimir ese tipo.
+weave _is_compressible with content_type as string into bool:
+    if calling scrolls.starts_with with content_type, "image/":
+        return false
+    if calling scrolls.starts_with with content_type, "video/":
+        return false
+    if calling scrolls.starts_with with content_type, "audio/":
+        return false
+    if calling scrolls.starts_with with content_type, "application/zip":
+        return false
+    if calling scrolls.starts_with with content_type, "application/gzip":
+        return false
+    if calling scrolls.starts_with with content_type, "application/octet-stream":
+        return false
+    return true

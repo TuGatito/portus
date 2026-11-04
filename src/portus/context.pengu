@@ -113,6 +113,45 @@ enchanting Context:
         return calling response.status
 
     ## ¿El handler ya respondió?
+    ## Abre un flujo SSE (`text/event-stream`).
+    weave sse_open into bool:
+        var response as ref to transport.Response is self->response
+        return calling response.stream_begin with "text/event-stream; charset=utf-8"
+
+    ## Envía un evento SSE (`event: …` + `data: …`).
+    weave sse_send with event as string, data as string into bool:
+        var response as ref to transport.Response is self->response
+        var payload as string is "event: {event}\ndata: {data}\n\n"
+        var ok as bool is calling response.stream_write_text with payload
+        banish payload
+        return ok
+
+    ## Cierra el flujo SSE.
+    weave sse_close into bool:
+        var response as ref to transport.Response is self->response
+        return calling response.stream_end
+
+    ## Empieza una respuesta en streaming con `content_type`.
+    weave stream_begin with content_type as string into bool:
+        var response as ref to transport.Response is self->response
+        return calling response.stream_begin with content_type
+
+    ## Escribe un trozo de texto en streaming.
+    weave stream_write with text as string into bool:
+        var response as ref to transport.Response is self->response
+        return calling response.stream_write_text with text
+
+    ## Cierra el streaming.
+    weave stream_end into bool:
+        var response as ref to transport.Response is self->response
+        return calling response.stream_end
+
+    ## Marca la respuesta como enviada sin escribir cuerpo.
+    weave mark_sent into void:
+        var response as ref to transport.Response is self->response
+        calling response.mark_sent
+        return
+
     weave is_sent into bool:
         var response as ref to transport.Response is self->response
         return calling response.is_sent

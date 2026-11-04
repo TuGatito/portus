@@ -1,0 +1,219 @@
+## portus.static_file — sirve un directorio como estáticos.
+##
+## `mount(app, "/static", "./public")` registra `GET /static/*file`. Resuelve
+## el archivo relativo a `root`, rechaza rutas con `..`, pone `Content-Type`
+## por extensión, `ETag` y `Last-Modified`, honra `If-None-Match` (304) y una
+## `Range: bytes=a-b` (206).
+##
+## ## Ejemplo
+## ```pengu
+## let mounted as result of void to portus.route.PatternError is calling portus.static_file.mount with sigil of app, "/static", "./public"
+## ```
+##
+## ## Memoria
+## La configuración se copia en la arena de la aplicación.
+import std.archivum
+import std.arena as arena_module
+import std.chronicle
+import std.scrolls
+import portus.application as application_module
+import portus.context as context_module
+import portus.error
+import portus.handler as handler_module
+import portus.mime
+import portus.native as native_module
+import portus.transport as transport
+import portus.route as route
+
+## Configuración del montaje.
+rune StaticConfig:
+    ## Directorio raíz en disco.
+    root as string
+    ## Prefijo público (sin barra final).
+    prefix as string
+
+## Un rango pedido por `Range: bytes=a-b`.
+rune ByteRange:
+    ## `true` si la cabecera pedía un rango.
+    requested as bool
+    ## `true` si el rango es utilizable.
+    valid as bool
+    ## Primer byte incluido.
+    start as int
+    ## Último byte incluido.
+    last as int
+
+antiquus _raw_static with config as ref to StaticConfig into ref to void:
+    r"""
+return (void *)config;
+"""
+
+## Sirve `root` bajo `prefix` (`"/static"` o `""` para la raíz).
+##
+## ## Memoria
+## Crea el patrón `"/static/*file"` y copia `root` en la arena.
+weave mount with app as ref to application_module.Application, prefix as string, root as string into result of void to route.PatternError:
+    var prefix_norm as string is calling _normalize_prefix with prefix
+    var pattern as string is ""
+    if prefix_norm.len == 0:
+        set pattern is "/*file"
+    else:
+        set pattern is "{prefix_norm}/*file"
+    var arena_ref as ref to arena_module.Arena is calling application_module.arena_of with app
+    var config as ref to StaticConfig is calling arena_module.arena_alloc_one of StaticConfig with arena_ref
+    set config->root is "{root}"
+    set config->prefix is prefix_norm
+    banish prefix_norm
+    return calling application_module.add_thick with app, "GET", pattern, _serve, calling _raw_static with config
+
+## Handler de un archivo estático.
+weave _serve with data as ref to void, ctx as ref to context_module.Context into result of void to HttpError:
+    var config as ref to StaticConfig is transmute data to ref to StaticConfig
+    let asked as maybe string is calling ctx.param with "file"
+    var rel as string is asked or else ""
+    if rel.len == 0:
+        set rel is "index.html"
+    if (calling _has_dotdot with rel) or (calling _has_absolute with rel):
+        return calling handler_module.err_void with (calling error.not_found)
+    var path as string is "{config->root}/{rel}"
+    var size as long is 0
+    var mtime as long is 0
+    var info as int is calling native_module.portus_native_file_info with (bytes of path), path.len, (sigil of size), (sigil of mtime)
+    banish path
+    if info != 0:
+        return calling handler_module.err_void with (calling error.not_found)
+    var etag as string is "\"{size}-{mtime}\""
+    var content_type as string is calling mime.for_path with rel
+    var last_modified as string is calling chronicle.format with "%a, %d %b %Y %H:%M:%S GMT", (mtime to float)
+    calling ctx.set_header with "ETag", etag
+    calling ctx.set_header with "Last-Modified", last_modified
+    calling ctx.set_header with "Accept-Ranges", "bytes"
+    calling ctx.set_header with "Content-Type", content_type
+    banish last_modified
+    let inm as maybe string is calling ctx.header with "If-None-Match"
+    if cached as string is inm:
+        var same as bool is (calling scrolls.compare with cached, etag) == 0
+        banish cached
+        banish etag
+        if same:
+            calling ctx.set_status with 304
+            calling ctx.mark_sent
+            return calling handler_module.ok_void
+    else:
+        banish etag
+    var range as ByteRange is calling _parse_range with ctx, (size to int)
+    var full_path as string is "{config->root}/{rel}"
+    var content as maybe string is calling archivum.read_bytes with full_path
+    banish full_path
+    if content.is_present is false:
+        banish content
+        return calling handler_module.err_void with (calling error.internal)
+    let body as string is content.value
+    if range.requested and not range.valid:
+        banish body
+        banish content
+        calling ctx.set_status with 416
+        calling ctx.set_header with "Content-Range", "bytes */{size}"
+        calling ctx.mark_sent
+        return calling handler_module.ok_void
+    var slice as string is body
+    if range.requested:
+        set slice is calling scrolls.substring with body, range.start, range.last + 1
+        banish body
+        calling ctx.set_status with 206
+        calling ctx.set_header with "Content-Range", "bytes {range.start}-{range.last}/{size}"
+    else:
+        calling ctx.set_status with 200
+    var response as ref to transport.Response is ctx->response
+    calling response.write_bytes with (bytes of slice), slice.len
+    banish slice
+    banish content
+    calling ctx.mark_sent
+    return calling handler_module.ok_void
+
+## `true` si `rel` intenta salir del directorio raíz.
+weave _has_dotdot with rel as string into bool:
+    return (calling scrolls.contains with rel, "..") or (calling scrolls.contains with rel, "//")
+
+## `true` si `rel` empieza por `/` (ruta absoluta).
+weave _has_absolute with rel as string into bool:
+    return calling scrolls.starts_with with rel, "/"
+
+## Normaliza un prefijo: quita la barra final y convierte `"/"` en `""`.
+weave _normalize_prefix with prefix as string into string:
+    if prefix.len == 0:
+        return ""
+    if (calling scrolls.compare with prefix, "/") == 0:
+        return ""
+    if calling scrolls.ends_with with prefix, "/":
+        return calling scrolls.substring with prefix, 0, prefix.len - 1
+    return calling scrolls.substring with prefix, 0, prefix.len
+
+## Lee y valida `Range: bytes=a-b` de la petición.
+weave _parse_range with ctx as ref to context_module.Context, total as int into ByteRange:
+    let raw as maybe string is calling ctx.header with "Range"
+    if header as string is raw:
+        var unusable as ByteRange is with requested is true, valid is false, start is 0, last is 0
+        if not calling scrolls.starts_with with header, "bytes=":
+            banish header
+            return unusable
+        var spec as string is calling scrolls.substring with header, 6, header.len
+        banish header
+        var dash as int is calling scrolls.index_of with spec, "-"
+        var out as ByteRange is with requested is true, valid is false, start is 0, last is 0
+        if dash <= 0:
+            banish spec
+            return out
+        var start_text as string is calling scrolls.substring with spec, 0, dash
+        var end_text as string is calling scrolls.substring with spec, dash + 1, spec.len
+        var start as int is calling _to_int with start_text, -1
+        var last as int is total - 1
+        if end_text.len > 0:
+            set last is calling _to_int with end_text, -1
+        banish start_text
+        banish end_text
+        banish spec
+        if start < 0 or last < start:
+            return out
+        if last >= total:
+            set last is total - 1
+        return with requested is true, valid is true, start is start, last is last
+    return with requested is false, valid is false, start is 0, last is 0
+
+## Valor 0-9 del carácter `c`, o -1 si no es un dígito ASCII.
+weave _digit_of with c as string into int:
+    if c == "0":
+        return 0
+    if c == "1":
+        return 1
+    if c == "2":
+        return 2
+    if c == "3":
+        return 3
+    if c == "4":
+        return 4
+    if c == "5":
+        return 5
+    if c == "6":
+        return 6
+    if c == "7":
+        return 7
+    if c == "8":
+        return 8
+    if c == "9":
+        return 9
+    return -1
+
+## Convierte dígitos decimales; `-1` si no son todos dígitos.
+weave _to_int with text as string, fallback as int into int:
+    if text.len == 0:
+        return fallback
+    var value as int is 0
+    var i as int is 0
+    while i < text.len:
+        var digit as int is (calling _digit_of with (text at i))
+        if digit < 0:
+            return fallback
+        set value is value * 10 + digit
+        set i is i + 1
+    return value

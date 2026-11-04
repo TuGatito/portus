@@ -79,6 +79,34 @@ weave whoami with context as ref to portus.Context into result of void to portus
     calling context.send_text with "sid={shown}"
     return calling portus.ok_void
 
+weave negotiate with context as ref to portus.Context into result of void to portus.HttpError:
+    var offered as list of string is ["application/json", "text/html"]
+    let chosen as maybe string is calling portus.best with context, offered
+    var kind as string is chosen or else "text/plain"
+    if kind == "application/json":
+        calling context.send_body_with_type with kind, "{\"kind\":\"json\"}"
+    else:
+        calling context.send_body_with_type with kind, "<b>html</b>"
+    banish kind
+    return calling portus.ok_void
+
+weave big with context as ref to portus.Context into result of void to portus.HttpError:
+    var filler as string is ""
+    var i as int is 0
+    while i < 200:
+        set filler is "{filler}0123456789"
+        set i is i + 1
+    calling context.send_text with filler
+    banish filler
+    return calling portus.ok_void
+
+weave sse with context as ref to portus.Context into result of void to portus.HttpError:
+    let opened as bool is calling context.sse_open
+    let one as bool is calling context.sse_send with "hola", "uno"
+    let two as bool is calling context.sse_send with "hola", "dos"
+    let closed as bool is calling context.sse_close
+    return calling portus.ok_void
+
 weave missing with context as ref to portus.Context into result of void to portus.HttpError:
     calling context.send_status with 404, "sin ruta"
     return calling portus.ok_void
@@ -95,6 +123,11 @@ weave main into int:
     calling portus.use with sigil of app, mw
     let echoed as result of void to portus.PatternError is calling portus.post with sigil of app, "/echo", echo_json
     let cookies as result of void to portus.PatternError is calling portus.get with sigil of app, "/whoami", whoami
+    let mounted as result of void to portus.PatternError is calling portus.mount_static with sigil of app, "/static", "./public"
+    let big_route as result of void to portus.PatternError is calling portus.get with sigil of app, "/big", big
+    let negotiated as result of void to portus.PatternError is calling portus.get with sigil of app, "/negotiate", negotiate
+    let sse_route as result of void to portus.PatternError is calling portus.get with sigil of app, "/sse", sse
+    calling portus.use_compress with sigil of app
     calling portus.use_request_id with sigil of app
     calling portus.use_security_headers with sigil of app
     calling portus.use_cors with sigil of app, "https://ejemplo.example"
@@ -105,6 +138,9 @@ weave main into int:
         return 1
     return bound
 PENGU
+
+mkdir -p "$tmp/public"
+printf 'hola estatico' >"$tmp/public/hello.txt"
 
 ( cd "$tmp" && "$PSC" add "$ROOT" --trust ) >"$tmp/add.log" 2>&1 || {
     echo "FAIL: psc add falló"; tail -20 "$tmp/add.log"; exit 1; }
@@ -182,5 +218,39 @@ echo "$f2_headers" | grep -qi "^x-content-type-options: nosniff" || { echo "FAIL
 preflight="$(curl -s -D - -o /dev/null --max-time 3 -X OPTIONS -H 'Access-Control-Request-Method: POST' "http://127.0.0.1:$port/echo")"
 echo "$preflight" | head -1 | grep -q "204" || { echo "FAIL: preflight CORS debía dar 204"; exit 1; }
 echo "$preflight" | grep -qi "^access-control-allow-origin: https://ejemplo.example" || { echo "FAIL: falta Access-Control-Allow-Origin"; exit 1; }
+
+static_body="$(curl -s --max-time 3 "http://127.0.0.1:$port/static/hello.txt")"
+[ "$static_body" = "hola estatico" ] || { echo "FAIL: estático '$static_body'"; exit 1; }
+static_headers="$(curl -s -D - -o /dev/null --max-time 3 "http://127.0.0.1:$port/static/hello.txt")"
+echo "$static_headers" | grep -qi "^content-type: text/plain" || { echo "FAIL: MIME del estático"; exit 1; }
+etag="$(echo "$static_headers" | grep -i '^etag: ' | tr -d '\r' | cut -d' ' -f2)"
+[ -n "$etag" ] || { echo "FAIL: el estático no tiene ETag"; exit 1; }
+not_modified="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 -H "If-None-Match: $etag" "http://127.0.0.1:$port/static/hello.txt")"
+[ "$not_modified" = "304" ] || { echo "FAIL: If-None-Match debía dar 304, dio $not_modified"; exit 1; }
+static_404="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:$port/static/nope.txt")"
+[ "$static_404" = "404" ] || { echo "FAIL: estático inexistente debía dar 404, dio $static_404"; exit 1; }
+partial="$(curl -s --max-time 3 -H 'Range: bytes=0-3' "http://127.0.0.1:$port/static/hello.txt")"
+[ "$partial" = "hola" ] || { echo "FAIL: Range devolvió '$partial'"; exit 1; }
+partial_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 -H 'Range: bytes=0-3' "http://127.0.0.1:$port/static/hello.txt")"
+[ "$partial_code" = "206" ] || { echo "FAIL: Range debía dar 206, dio $partial_code"; exit 1; }
+traversal="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 --path-as-is "http://127.0.0.1:$port/static/../src/main.pengu")"
+[ "$traversal" = "404" ] || { echo "FAIL: traversal debía dar 404, dio $traversal"; exit 1; }
+
+gzip_headers="$(curl -s -D - -o /dev/null --max-time 5 -H 'Accept-Encoding: gzip' "http://127.0.0.1:$port/big")"
+echo "$gzip_headers" | grep -qi "^content-encoding: gzip" || { echo "FAIL: falta Content-Encoding: gzip"; exit 1; }
+gzip_body="$(curl -s --max-time 5 -H 'Accept-Encoding: gzip' "http://127.0.0.1:$port/big" | gunzip 2>/dev/null | wc -c)"
+[ "$gzip_body" = "2000" ] || { echo "FAIL: gzip descomprimido mide $gzip_body"; exit 1; }
+
+json_accept="$(curl -s --max-time 3 -H 'Accept: application/json' "http://127.0.0.1:$port/negotiate")"
+[ "$json_accept" = '{"kind":"json"}' ] || { echo "FAIL: negociación JSON '$json_accept'"; exit 1; }
+html_accept="$(curl -s --max-time 3 -H 'Accept: text/html' "http://127.0.0.1:$port/negotiate")"
+[ "$html_accept" = "<b>html</b>" ] || { echo "FAIL: negociación HTML '$html_accept'"; exit 1; }
+
+sse_body="$(curl -s -N --max-time 4 "http://127.0.0.1:$port/sse")"
+echo "$sse_body" | grep -q "data: uno" || { echo "FAIL: SSE sin 'data: uno'"; exit 1; }
+echo "$sse_body" | grep -q "data: dos" || { echo "FAIL: SSE sin 'data: dos'"; exit 1; }
+sse_headers="$(curl -s -N -D - -o /dev/null --max-time 4 "http://127.0.0.1:$port/sse")"
+echo "$sse_headers" | grep -qi "^content-type: text/event-stream" || { echo "FAIL: SSE sin content-type"; exit 1; }
+echo "$sse_headers" | grep -qi "^transfer-encoding: chunked" || { echo "FAIL: SSE sin chunked"; exit 1; }
 
 echo "OK e2e hello (puerto $port)"

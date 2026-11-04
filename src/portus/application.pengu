@@ -38,8 +38,14 @@ rune RouteEntry:
     method as string
     ## Patrón compilado.
     pattern as route.Pattern
-    ## Qué responde.
+    ## Handler fino (sin configuración). Se usa si `is_thick` es `false`.
     handler as Handler
+    ## Handler grueso (con `data`). Se usa si `is_thick` es `true`.
+    invoke as handler_module.MiddlewareFn
+    ## Configuración del handler grueso; la posee la arena de la aplicación.
+    data as ref to void
+    ## `true` si la ruta es de las gruesas.
+    is_thick as bool
     ## Especificidad del patrón (mayor gana).
     score as int
 
@@ -80,6 +86,14 @@ weave _no_error_handler with ctx as ref to Context, failure as HttpError into re
 
 ## Handler de 404 por defecto: no escribe nada; lo hace `respond_error`.
 weave _no_not_found with ctx as ref to Context into result of void to HttpError:
+    return calling handler_module.ok_void
+
+## Middleware de relleno para las rutas finas.
+weave _no_thick with data as ref to void, ctx as ref to Context into result of void to HttpError:
+    return calling handler_module.ok_void
+
+## Handler fino de relleno para las rutas gruesas.
+weave _no_handler with ctx as ref to Context into result of void to HttpError:
     return calling handler_module.ok_void
 
 ## Hook vacío.
@@ -145,7 +159,7 @@ weave add with app as ref to Application, method as string, pattern as string, h
     var compiled as result of route.Pattern to route.PatternError is calling route.compile with pattern
     var pat as route.Pattern is compiled or:
         return calling err_of with error
-    var entry as RouteEntry is with method is method, pattern is pat, handler is handler, score is pat.score
+    var entry as RouteEntry is with method is method, pattern is pat, handler is handler, invoke is _no_thick, data is transmute 0 to ref to void, is_thick is false, score is pat.score
     calling app->_routes.push with entry
     calling _sort_last with app
     return calling ok_of with 0
@@ -278,12 +292,31 @@ weave _run_route with app as ref to Application, ctx as ref to Context into mayb
     calling route.free_strings with allowed
     set ctx->params is chosen_params
     var entry as RouteEntry is (app->_routes at chosen)
-    var outcome as result of void to HttpError is calling entry.handler with ctx
+    var outcome as result of void to HttpError is calling _invoke_entry with entry, ctx
     if outcome.is_ok:
         if not calling ctx.is_sent:
             return some (calling error_module.internal)
         return maybe none
     return some (outcome.error)
+
+## Ejecuta la ruta, sea fina o gruesa.
+weave _invoke_entry with entry as RouteEntry, ctx as ref to Context into result of void to HttpError:
+    if entry.is_thick:
+        return calling entry.invoke with entry.data, ctx
+    return calling entry.handler with ctx
+
+## Registra una ruta con un handler que lleva configuración (`data`).
+##
+## ## Memoria
+## `data` debe vivir tanto como la aplicación (normalmente en su arena).
+weave add_thick with app as ref to Application, method as string, pattern as string, invoke as handler_module.MiddlewareFn, data as ref to void into result of void to route.PatternError:
+    var compiled as result of route.Pattern to route.PatternError is calling route.compile with pattern
+    var pat as route.Pattern is compiled or:
+        return calling err_of with error
+    var entry as RouteEntry is with method is method, pattern is pat, handler is _no_handler, invoke is invoke, data is data, is_thick is true, score is pat.score
+    calling app->_routes.push with entry
+    calling _sort_last with app
+    return calling ok_of with 0
 
 ## Convierte un fallo en respuesta (o delega en `on_error` / `on_not_found`).
 weave _handle_failure with app as ref to Application, ctx as ref to Context, failure as HttpError into void:

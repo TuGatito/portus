@@ -1,0 +1,243 @@
+## portus.negotiation — negociación de contenido por `Accept`.
+##
+## `best(context, offered)` devuelve el primer tipo de `offered` que el cliente
+## acepta, respetando `q=` (a igualdad de `q` gana el orden de `Accept`).
+## `accepts(context, type)` responde sí/no.
+##
+## ## Ejemplo
+## ```pengu
+## let chosen as maybe string is calling portus.negotiation.best with ctx, ["application/json", "text/html"]
+## ```
+import std.scrolls
+import std.ward
+import portus.context as context_module
+
+## Mejor tipo ofrecido, o `none` si el cliente no acepta ninguno.
+##
+## ## Memoria
+## El resultado es una copia propia; libéralo con `banish`.
+weave best with ctx as ref to context_module.Context, offered as list of string into maybe string:
+    let raw as maybe string is calling ctx.header with "Accept"
+    if header as string is raw:
+        var out as maybe string is calling _best_with with header, offered
+        banish header
+        return out
+    if offered.len == 0:
+        return maybe none
+    return some (calling scrolls.substring with (offered at 0), 0, (offered at 0).len)
+
+## `true` si el cliente acepta `media_type`.
+weave accepts with ctx as ref to context_module.Context, media_type as string into bool:
+    var one as list of string is [media_type]
+    let chosen as maybe string is calling best with ctx, one
+    if value as string is chosen:
+        banish value
+        return true
+    return false
+
+## Implementación sobre el valor de `Accept`.
+weave _best_with with header as string, offered as list of string into maybe string:
+    if offered.len == 0:
+        return maybe none
+    var best_index as int is -1
+    var best_q as int is -1
+    var best_order as int is 999999
+    var accepted_count as int is 0
+    var items as list of string is calling _split_commas with header
+    var i as int is 0
+    while i < items.len:
+        let item as string is (items at i)
+        var spec as string is calling _without_params with item
+        var q as int is calling _q_of with item
+        if q > 0:
+            set accepted_count is accepted_count + 1
+            var j as int is 0
+            while j < offered.len:
+                let candidate as string is (offered at j)
+                if calling _matches with spec, candidate:
+                    if q > best_q or (q == best_q and i < best_order):
+                        set best_q is q
+                        set best_index is j
+                        set best_order is i
+                set j is j + 1
+        banish spec
+        set i is i + 1
+    calling _free_items with items
+    if accepted_count == 0:
+        return maybe none
+    if best_index < 0:
+        return maybe none
+    let chosen as string is (offered at best_index)
+    return some (calling scrolls.substring with chosen, 0, chosen.len)
+
+## `true` si `spec` (de `Accept`) cubre `candidate`.
+weave _matches with spec as string, candidate as string into bool:
+    if spec == "*/*":
+        return true
+    if (calling scrolls.compare with spec, candidate) == 0:
+        return true
+    if calling scrolls.ends_with with spec, "/*":
+        var prefix as string is calling scrolls.substring with spec, 0, spec.len - 1
+        var ok as bool is calling scrolls.starts_with with candidate, prefix
+        banish prefix
+        return ok
+    return false
+
+## `q` en milésimas (1000 por defecto).
+weave _q_of with item as string into int:
+    var at as int is calling scrolls.index_of with item, "q="
+    if at < 0:
+        return 1000
+    var start as int is at + 2
+    var end as int is calling _end_of_number with item, start
+    if end <= start:
+        return 0
+    var text as string is calling scrolls.substring with item, start, end
+    var q as int is calling _decimal_to_milli with text
+    banish text
+    return q
+
+## Índice donde acaba el número decimal que empieza en `start`.
+weave _end_of_number with item as string, start as int into int:
+    var i as int is start
+    while i < item.len:
+        var piece as string is (item at i)
+        if piece == ".":
+            set i is i + 1
+            continue
+        if calling _is_digit with piece:
+            set i is i + 1
+            continue
+        break
+    return i
+
+## `true` si `piece` es un dígito.
+weave _is_digit with piece as string into bool:
+    return piece == "0" or piece == "1" or piece == "2" or piece == "3" or piece == "4" or piece == "5" or piece == "6" or piece == "7" or piece == "8" or piece == "9"
+
+## Convierte "0.5" (o "1") a milésimas.
+weave _decimal_to_milli with text as string into int:
+    var dot as int is calling scrolls.index_of with text, "."
+    if dot < 0:
+        var whole as int is calling _digits_to_int with text
+        return whole * 1000
+    var whole_text as string is calling scrolls.substring with text, 0, dot
+    var frac_text as string is calling scrolls.substring with text, dot + 1, text.len
+    var whole as int is calling _digits_to_int with whole_text
+    var frac as int is calling _fraction_to_milli with frac_text
+    banish whole_text
+    banish frac_text
+    return whole * 1000 + frac
+
+## Dígitos a entero (0 si no hay).
+weave _digits_to_int with text as string into int:
+    var value as int is 0
+    var i as int is 0
+    while i < text.len:
+        var digit as int is calling _digit_of with (text at i)
+        if digit < 0:
+            return value
+        set value is value * 10 + digit
+        set i is i + 1
+    return value
+
+## Parte decimal a milésimas (`0.5` → 500).
+weave _fraction_to_milli with text as string into int:
+    var value as int is 0
+    var scale as int is 100
+    var i as int is 0
+    while i < text.len and i < 3:
+        var digit as int is calling _digit_of with (text at i)
+        if digit < 0:
+            break
+        set value is value + digit * scale
+        set scale is scale / 10
+        set i is i + 1
+    return value
+
+## Valor 0-9 de un carácter, o -1.
+weave _digit_of with piece as string into int:
+    if piece == "0":
+        return 0
+    if piece == "1":
+        return 1
+    if piece == "2":
+        return 2
+    if piece == "3":
+        return 3
+    if piece == "4":
+        return 4
+    if piece == "5":
+        return 5
+    if piece == "6":
+        return 6
+    if piece == "7":
+        return 7
+    if piece == "8":
+        return 8
+    if piece == "9":
+        return 9
+    return -1
+
+## Sin parámetros (`; q=…`, `; charset=…`).
+weave _without_params with item as string into string:
+    var semi as int is calling scrolls.index_of with item, ";"
+    var trimmed as string is ""
+    if semi < 0:
+        set trimmed is calling scrolls.trim with item
+    else:
+        set trimmed is calling scrolls.substring with item, 0, semi
+    return trimmed
+
+## Separa por comas y recorta cada trozo.
+weave _split_commas with header as string into list of string:
+    var out as list of string is []
+    var start as int is 0
+    var i as int is 0
+    while i <= header.len:
+        if i == header.len or (header at i) == ",":
+            var piece as string is calling scrolls.substring with header, start, i
+            var trimmed as string is calling scrolls.trim with piece
+            banish piece
+            calling out.push with trimmed
+            set start is i + 1
+        set i is i + 1
+    return out
+
+## Libera la lista de trozos y sus cadenas.
+weave _free_items with items as list of string into void:
+    var i as int is 0
+    while i < items.len:
+        var piece as string is (items at i)
+        banish piece
+        set i is i + 1
+    banish items
+    return
+
+test "accept simple elige el primero":
+    var offered as list of string is ["application/json", "text/html"]
+    let chosen as maybe string is calling _best_with with "*/*", offered
+    var value as string is chosen or else "none"
+    calling ward.assert_eq_string with value, "application/json"
+    banish value
+
+test "accept con q prefiere el mayor":
+    var offered as list of string is ["text/html", "application/json"]
+    let chosen as maybe string is calling _best_with with "text/html;q=0.3, application/json;q=0.9", offered
+    var value as string is chosen or else "none"
+    calling ward.assert_eq_string with value, "application/json"
+    banish value
+
+test "accept de tipo cubre subtipos":
+    var offered as list of string is ["application/json"]
+    let chosen as maybe string is calling _best_with with "application/*", offered
+    if value as string is chosen:
+        calling ward.assert_eq_string with value, "application/json"
+        banish value
+    else:
+        calling ward.assert_true with false
+
+test "accept sin coincidencia no elige nada":
+    var offered as list of string is ["application/json"]
+    let chosen as maybe string is calling _best_with with "text/html", offered
+    calling ward.assert_true with (not chosen.is_present)
