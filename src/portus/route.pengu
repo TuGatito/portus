@@ -17,6 +17,7 @@
 ## `free_pattern`. `match_pattern` devuelve `Params` dueño de sus cadenas:
 ## libéralo con `free_params`.
 import std.scrolls
+import std.ward
 
 ## Tipo de un segmento del patrón.
 omen SegmentKind:
@@ -279,3 +280,82 @@ weave match_pattern with pattern as Pattern, path as string into maybe Params:
         return maybe none
     var found as Params is with names is names, values is values
     return some found
+
+test "compila la raíz como patrón vacío":
+    var compiled as result of Pattern to PatternError is calling compile with "/"
+    calling ward.assert_true with compiled.is_ok
+    var pattern as Pattern is compiled.value
+    calling ward.assert_eq_int with pattern.score, 0
+    calling ward.assert_eq_int with pattern.segments.len, 0
+    var found as maybe Params is calling match_pattern with pattern, "/"
+    calling ward.assert_true with found.is_present
+    var params as Params is found.value
+    calling free_params with params
+
+test "literal y parámetro puntúan distinto":
+    var compiled as result of Pattern to PatternError is calling compile with "/users/:name"
+    calling ward.assert_true with compiled.is_ok
+    var pattern as Pattern is compiled.value
+    calling ward.assert_eq_int with pattern.score, 1010
+    calling ward.assert_eq_int with pattern.segments.len, 2
+    calling ward.assert_eq_string with (pattern.segments at 1).text, "name"
+    calling free_pattern with pattern
+
+test "captura el parámetro de ruta":
+    var compiled as result of Pattern to PatternError is calling compile with "/users/:name"
+    var pattern as Pattern is compiled.value
+    var found as maybe Params is calling match_pattern with pattern, "/users/ada"
+    calling ward.assert_true with found.is_present
+    var params as Params is found.value
+    var name as maybe string is calling get_param with params, "name"
+    calling ward.assert_true with name.is_present
+    calling ward.assert_eq_string with name.value, "ada"
+    calling free_params with params
+    calling free_pattern with pattern
+
+test "un literal no casa con otro literal":
+    var compiled as result of Pattern to PatternError is calling compile with "/users/:name"
+    var pattern as Pattern is compiled.value
+    var found as maybe Params is calling match_pattern with pattern, "/cuentas/ada"
+    calling ward.assert_false with found.is_present
+    calling free_pattern with pattern
+
+test "una ruta más corta no casa":
+    var compiled as result of Pattern to PatternError is calling compile with "/users/:name"
+    var pattern as Pattern is compiled.value
+    var found as maybe Params is calling match_pattern with pattern, "/users"
+    calling ward.assert_false with found.is_present
+    calling free_pattern with pattern
+
+test "el comodín absorbe el resto":
+    var compiled as result of Pattern to PatternError is calling compile with "/files/*path"
+    calling ward.assert_true with compiled.is_ok
+    var pattern as Pattern is compiled.value
+    var found as maybe Params is calling match_pattern with pattern, "/files/a/b/c"
+    calling ward.assert_true with found.is_present
+    var params as Params is found.value
+    var rest as maybe string is calling get_param with params, "path"
+    calling ward.assert_true with rest.is_present
+    calling ward.assert_eq_string with rest.value, "a/b/c"
+    calling free_params with params
+    calling free_pattern with pattern
+
+test "rechaza parámetros duplicados":
+    var compiled as result of Pattern to PatternError is calling compile with "/:a/:a"
+    calling ward.assert_false with compiled.is_ok
+
+test "rechaza un comodín que no va al final":
+    var compiled as result of Pattern to PatternError is calling compile with "/a/*x/b"
+    calling ward.assert_false with compiled.is_ok
+
+test "los parámetros distinguen mayúsculas":
+    var compiled as result of Pattern to PatternError is calling compile with "/users/:name"
+    var pattern as Pattern is compiled.value
+    var found as maybe Params is calling match_pattern with pattern, "/Users/ada"
+    calling ward.assert_false with found.is_present
+    calling free_pattern with pattern
+
+test "un parámetro que no existe devuelve none":
+    var params as Params is with names is [], values is []
+    var absent as maybe string is calling get_param with params, "nope"
+    calling ward.assert_false with absent.is_present

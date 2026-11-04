@@ -1,9 +1,9 @@
-## portus.application — la aplicación: rutas, despacho y respuesta de errores.
+## portus.application — la aplicación: rutas, middlewares, despacho y errores.
 ##
 ## Una `Application` guarda rutas (método + patrón + handler) ordenadas por
-## especificidad. El despacho busca la primera ruta cuyo método y ruta encajen,
-## construye el `Context` y llama al handler. Si el handler devuelve un
-## `HttpError`, o no hay ruta, la aplicación genera la respuesta de error.
+## especificidad, middlewares que corren antes y después de la ruta, y los
+## hooks de error y ciclo de vida. El despacho construye un `Context` por
+## petición y lo pasa siempre por `ref to`.
 ##
 ## ## Ejemplo
 ## ```pengu
@@ -13,7 +13,10 @@
 ## ```
 ##
 ## ## Memoria
-## `free_application` libera las rutas (no los handlers, que son código).
+## `free_application` libera las rutas, los middlewares y la arena de
+## configuración. Los handlers y los hooks son código: no se copian.
+import std.arena as arena_module
+import std.scrolls
 import portus.context as context_module
 import portus.error
 import portus.handler as handler_module
@@ -21,7 +24,12 @@ import portus.route as route
 import portus.transport as transport
 
 alias Context as context_module.Context
+alias ErrorHandler as handler_module.ErrorHandler
 alias Handler as handler_module.Handler
+alias Middleware as handler_module.Middleware
+
+## Hook de ciclo de vida (`on_start`, `on_shutdown`).
+alias AppHook as weave with app as ref to Application into void
 
 ## Una ruta registrada.
 rune RouteEntry:
@@ -34,18 +42,96 @@ rune RouteEntry:
     ## Especificidad del patrón (mayor gana).
     score as int
 
+## Un middleware registrado con el prefijo de rutas al que aplica.
+rune MiddlewareEntry:
+    ## Prefijo de ruta; `""` significa todas.
+    prefix as string
+    ## Qué ejecutar.
+    middleware as Middleware
+
 ## La aplicación completa.
 rune Application:
     ## Rutas ordenadas de más a menos específica.
     _routes as list of RouteEntry
+    ## Middlewares que corren antes de la ruta, en orden de registro.
+    _befores as list of MiddlewareEntry
+    ## Middlewares que corren después de la ruta, en orden de registro.
+    _finishers as list of MiddlewareEntry
+    ## Arena para la configuración de los middlewares.
+    _arena as arena_module.Arena
+    ## Handler de error (por defecto, el de portus).
+    _on_error as ErrorHandler
+    _has_on_error as bool
+    ## Handler de 404 (por defecto, el de portus).
+    _on_not_found as Handler
+    _has_on_not_found as bool
+    ## Hooks de arranque y parada.
+    _on_start as AppHook
+    _has_on_start as bool
+    _on_shutdown as AppHook
+    _has_on_shutdown as bool
+    # Una vez se presta la aplicación no se vuelve a copiar (modo debug).
+    _sealed as bool
+
+## Handler de error por defecto: deja que portus escriba la respuesta.
+weave _no_error_handler with ctx as ref to Context, failure as HttpError into result of void to HttpError:
+    return calling handler_module.err_void with failure
+
+## Handler de 404 por defecto: no escribe nada; lo hace `respond_error`.
+weave _no_not_found with ctx as ref to Context into result of void to HttpError:
+    return calling handler_module.ok_void
+
+## Hook vacío.
+weave _no_hook with app as ref to Application into void:
+    return
 
 ## Crea una aplicación vacía.
 weave new_application into Application:
-    return with _routes is []
+    var arena as arena_module.Arena is calling arena_module.Arena.new
+    return with _routes is [], _befores is [], _finishers is [], _arena is arena, _on_error is _no_error_handler, _has_on_error is false, _on_not_found is _no_not_found, _has_on_not_found is false, _on_start is _no_hook, _has_on_start is false, _on_shutdown is _no_hook, _has_on_shutdown is false, _sealed is false
 
 ## Cuántas rutas hay registradas.
 weave route_count with app as ref to Application into int:
     return app->_routes.len
+
+## La arena donde viven las configuraciones de middleware.
+##
+## ## Memoria
+## Devuelve un préstamo; la arena se libera con `free_application`.
+weave arena_of with app as ref to Application into ref to arena_module.Arena:
+    return sigil of app->_arena
+
+## Registra un middleware que corre antes de las rutas en todo el árbol.
+weave use with app as ref to Application, middleware as Middleware into void:
+    calling app->_befores.push with (with prefix is "", middleware is middleware)
+
+## Registra un middleware sólo para las rutas que empiezan por `prefix`.
+weave use_at with app as ref to Application, prefix as string, middleware as Middleware into void:
+    calling app->_befores.push with (with prefix is prefix, middleware is middleware)
+
+## Registra un middleware que corre después de la ruta (para métricas, logs…).
+weave after with app as ref to Application, middleware as Middleware into void:
+    calling app->_finishers.push with (with prefix is "", middleware is middleware)
+
+## Registra el handler que convierte un `HttpError` en respuesta.
+weave on_error with app as ref to Application, handler as ErrorHandler into void:
+    set app->_on_error is handler
+    set app->_has_on_error is true
+
+## Registra el handler de rutas no encontradas.
+weave on_not_found with app as ref to Application, handler as Handler into void:
+    set app->_on_not_found is handler
+    set app->_has_on_not_found is true
+
+## Registra un hook que corre al arrancar el servidor.
+weave on_start with app as ref to Application, hook as AppHook into void:
+    set app->_on_start is hook
+    set app->_has_on_start is true
+
+## Registra un hook que corre al detenerse el servidor.
+weave on_shutdown with app as ref to Application, hook as AppHook into void:
+    set app->_on_shutdown is hook
+    set app->_has_on_shutdown is true
 
 ## Registra una ruta.
 ##
@@ -75,7 +161,7 @@ weave _sort_last with app as ref to Application into void:
         set app->_routes at i is previous
         set i is i - 1
 
-## Libera las rutas y sus patrones. No libera el código de los handlers.
+## Libera las rutas, los middlewares y la arena. No libera el código.
 weave free_application with app as ref to Application into void:
     var i as int is 0
     while i < app->_routes.len:
@@ -83,35 +169,111 @@ weave free_application with app as ref to Application into void:
         calling route.free_pattern with entry.pattern
         set i is i + 1
     banish app->_routes
+    banish app->_befores
+    banish app->_finishers
+    var arena as ref to arena_module.Arena is sigil of app->_arena
+    calling arena.free
 
-## Despacha una petición ya parseada.
+## Despacha una petición ya parseada: befores, ruta, finishers y error.
 ##
 ## ## Memoria
 ## Presta `request` y `response`; libera el `Params` que construye.
 weave dispatch with app as ref to Application, request as ref to transport.Request, response as ref to transport.Response into void:
-    var method as string is calling request.method
-    var path as string is calling request.path
+    var params as route.Params is calling _empty_params
+    var ctx as Context is with request is request, response is response, params is params
+    var failure as maybe HttpError is calling _run_befores with app, sigil of ctx
+    if not failure.is_present and not calling response.is_sent:
+        set failure is calling _run_route with app, sigil of ctx
+    calling _run_finishers with app, sigil of ctx
+    if failure.is_present and not calling ctx.is_sent:
+        calling _handle_failure with app, sigil of ctx, (failure.value)
+    calling route.free_params with ctx.params
+
+## Un `Params` vacío (para peticiones que no encajan en ninguna ruta).
+weave _empty_params into route.Params:
+    return with names is [], values is []
+
+## Corre los middlewares de antes. Devuelve el primer fallo, si lo hay.
+weave _run_befores with app as ref to Application, ctx as ref to Context into maybe HttpError:
+    var i as int is 0
+    while i < app->_befores.len:
+        var entry as MiddlewareEntry is (app->_befores at i)
+        if calling _matches_prefix with ctx, entry.prefix:
+            var outcome as result of void to HttpError is calling handler_module.invoke_middleware with entry.middleware, ctx
+            if not outcome.is_ok:
+                return some (outcome.error)
+            if calling ctx.is_sent:
+                return maybe none
+        set i is i + 1
+    return maybe none
+
+## Corre los middlewares de después; sus fallos no cambian la respuesta.
+weave _run_finishers with app as ref to Application, ctx as ref to Context into void:
+    var i as int is 0
+    while i < app->_finishers.len:
+        var entry as MiddlewareEntry is (app->_finishers at i)
+        if calling _matches_prefix with ctx, entry.prefix:
+            var outcome as result of void to HttpError is calling handler_module.invoke_middleware with entry.middleware, ctx
+            if not outcome.is_ok:
+                return
+        set i is i + 1
+
+## ¿La ruta de la petición empieza por `prefix`?
+weave _matches_prefix with ctx as ref to Context, prefix as string into bool:
+    if prefix == "":
+        return true
+    return calling scrolls.starts_with with (calling ctx.path), prefix
+
+## Busca la ruta y ejecuta su handler. Devuelve el fallo, si lo hay.
+weave _run_route with app as ref to Application, ctx as ref to Context into maybe HttpError:
+    var method as string is calling ctx.method
+    var path as string is calling ctx.path
     var allowed as list of string is []
+    var chosen as int is -1
+    var chosen_params as route.Params is calling _empty_params
     var i as int is 0
     while i < app->_routes.len:
         var entry as RouteEntry is (app->_routes at i)
         var found as maybe route.Params is calling route.match_pattern with entry.pattern, path
         if found.is_present:
-            var params as route.Params is found.value
             if entry.method == method or entry.method == "*":
-                calling _run_handler with request, response, params, entry.handler
-                calling route.free_params with params
-                calling route.free_strings with allowed
-                return
-            calling route.free_params with params
+                set chosen is i
+                set chosen_params is found.value
+                break
+            calling route.free_params with found.value
             calling allowed.push with calling route._copy with entry.method
         set i is i + 1
-    if allowed.len > 0:
-        var allow as string is calling _join_methods with allowed
+    if chosen < 0:
+        if allowed.len > 0:
+            var allow as string is calling _join_methods with allowed
+            calling route.free_strings with allowed
+            return some (calling method_not_allowed with allow)
         calling route.free_strings with allowed
-        calling respond_error with response, (calling method_not_allowed with allow)
+        return some (calling not_found)
+    calling route.free_strings with allowed
+    set ctx->params is chosen_params
+    var entry as RouteEntry is (app->_routes at chosen)
+    var outcome as result of void to HttpError is calling entry.handler with ctx
+    if outcome.is_ok:
+        if not calling ctx.is_sent:
+            return some (calling internal)
+        return maybe none
+    return some (outcome.error)
+
+## Convierte un fallo en respuesta (o delega en `on_error` / `on_not_found`).
+weave _handle_failure with app as ref to Application, ctx as ref to Context, failure as HttpError into void:
+    var response as ref to transport.Response is ctx->response
+    if failure.kind == HttpErrorKind.NotFound and app->_has_on_not_found:
+        var not_found_outcome as result of void to HttpError is calling app->_on_not_found with ctx
+        if not_found_outcome.is_ok and calling ctx.is_sent:
+            return
+        calling respond_error with response, failure
         return
-    calling respond_error with response, (calling not_found)
+    if app->_has_on_error:
+        var outcome as result of void to HttpError is calling app->_on_error with ctx, failure
+        if outcome.is_ok and calling ctx.is_sent:
+            return
+    calling respond_error with response, failure
 
 ## Junta métodos permitidos en el valor de `Allow`.
 weave _join_methods with methods as list of string into string:
@@ -125,19 +287,6 @@ weave _join_methods with methods as list of string into string:
         set i is i + 1
     return out
 
-## Ejecuta el handler y traduce su resultado a una respuesta.
-weave _run_handler with request as ref to transport.Request, response as ref to transport.Response, params as route.Params, handler as Handler into void:
-    var ctx as Context is with request is request, response is response, params is params
-    var outcome as result of void to HttpError is calling handler with sigil of ctx
-    if outcome.is_ok:
-        if not calling response.is_sent:
-            calling respond_error with response, (calling internal)
-        return
-    var failure as HttpError is outcome.error
-    if calling response.is_sent:
-        return
-    calling respond_error with response, failure
-
 ## Escribe la respuesta de error (a menos que ya se haya enviado algo).
 ##
 ## ## Memoria
@@ -146,6 +295,12 @@ weave respond_error with response as ref to transport.Response, failure as HttpE
     var status as int is calling status_of with failure
     var message as string is calling message_of with failure
     calling response.set_status with status
+    if failure.kind == HttpErrorKind.MethodNotAllowed:
+        calling response.set_header with "Allow", message
+        calling response.set_header with "Content-Type", "text/plain; charset=utf-8"
+        calling response.write_text with "method not allowed"
+        calling response.mark_sent
+        return
     calling response.set_header with "Content-Type", "text/plain; charset=utf-8"
     calling response.write_text with message
     calling response.mark_sent
@@ -162,7 +317,12 @@ return (void *)app;
 ## ## Memoria
 ## La aplicación debe vivir mientras el servidor corre (esta llamada bloquea).
 weave serve_with with app as ref to Application, options as transport.ServeOptions into result of int to string:
-    return calling transport.serve_loop_data with options, _serve_bridge, calling _as_raw_context with app
+    if app->_has_on_start:
+        calling app->_on_start with app
+    var outcome as result of int to string is calling transport.serve_loop_data with options, _serve_bridge, calling _as_raw_context with app
+    if app->_has_on_shutdown:
+        calling app->_on_shutdown with app
+    return outcome
 
 ## Puente con `data`: reenvía al despachador de la aplicación.
 weave _serve_bridge with data as ref to void, request as ref to transport.Request, response as ref to transport.Response into void:

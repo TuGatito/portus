@@ -13,6 +13,8 @@
 ##     calling context.send_text with "hola"
 ##     return calling portus.ok_void
 ## ```
+import std.ward
+
 omen HttpErrorKind:
     ## La petición está mal formada o viola el contrato de la ruta.
     BadRequest
@@ -60,7 +62,7 @@ weave not_found into HttpError:
 
 ## Error 405 con la cabecera `Allow` ya formateada.
 weave method_not_allowed with allow as string into HttpError:
-    return with kind is HttpErrorKind.MethodNotAllowed, message is "method not allowed (allow: {allow})"
+    return with kind is HttpErrorKind.MethodNotAllowed, message is allow
 
 ## Error 409 con un mensaje concreto.
 weave conflict with message as string into HttpError:
@@ -99,3 +101,23 @@ weave status_of with failure as HttpError into int:
 ## Texto para el cuerpo de la página de error.
 weave message_of with failure as HttpError into string:
     return failure.message
+
+test "el status corresponde a la categoría":
+    calling ward.assert_eq_int with (calling status_of with (calling bad_request with "x")), 400
+    calling ward.assert_eq_int with (calling status_of with (calling unauthorized)), 401
+    calling ward.assert_eq_int with (calling status_of with (calling forbidden)), 403
+    calling ward.assert_eq_int with (calling status_of with (calling not_found)), 404
+    calling ward.assert_eq_int with (calling status_of with (calling method_not_allowed with "GET, POST")), 405
+    calling ward.assert_eq_int with (calling status_of with (calling conflict with "x")), 409
+    calling ward.assert_eq_int with (calling status_of with (calling payload_too_large)), 413
+    calling ward.assert_eq_int with (calling status_of with (calling unsupported_media_type)), 415
+    calling ward.assert_eq_int with (calling status_of with (calling too_many_requests)), 429
+    calling ward.assert_eq_int with (calling status_of with (calling internal)), 500
+
+test "el mensaje del 400 es el que dio el handler":
+    var failure as HttpError is calling bad_request with "falta el nombre"
+    calling ward.assert_eq_string with (calling message_of with failure), "falta el nombre"
+
+test "el 500 nunca filtra el detalle interno":
+    var failure as HttpError is calling internal
+    calling ward.assert_eq_string with (calling message_of with failure), "internal server error"

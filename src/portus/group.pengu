@@ -1,0 +1,81 @@
+## portus.group — un prefijo de rutas sobre una aplicación.
+##
+## Un `Group` no tiene estado propio ni un despachador aparte: guarda la
+## aplicación y el prefijo, y al registrar una ruta le antepone el prefijo. Así
+## se agrupan rutas (`/api`, `/admin`) sin `mount` ni copias de la aplicación.
+##
+## ## Ejemplo
+## ```pengu
+## var api as portus.Group is calling portus.new_group with sigil of app, "/api"
+## let ok as result of void to portus.PatternError is calling api.get with "/users", users
+## ```
+##
+## ## Memoria
+## El `Group` presta la aplicación: no la libera ni la copia.
+import std.ward
+import portus.application as application_module
+import portus.handler as handler_module
+import portus.route as route_module
+
+alias Application as application_module.Application
+alias Handler as handler_module.Handler
+
+## Un grupo de rutas: la aplicación donde registra y el prefijo que antepone.
+rune Group:
+    ## Aplicación donde se registran las rutas (prestada).
+    _app as ref to Application
+    ## Prefijo que se antepone a cada patrón (sin `/` final).
+    _prefix as string
+
+## Crea un grupo de rutas bajo `prefix` (`"/api"`, `"/api/v1"`, …).
+weave group_with_prefix with app as ref to Application, prefix as string into Group:
+    var clean as string is prefix
+    if clean == "/":
+        set clean is ""
+    return with _app is app, _prefix is clean
+
+enchanting Group:
+    ## Patrón completo de una ruta del grupo (prefijo + patrón).
+    weave ritual full_pattern with group as ref to Group, pattern as string into string:
+        if group->_prefix == "":
+            return pattern
+        if pattern == "" or pattern == "/":
+            return group->_prefix
+        return "{group->_prefix}{pattern}"
+
+    ## Registra una ruta `GET` bajo el prefijo.
+    weave get with pattern as string, handler as Handler into result of void to route_module.PatternError:
+        var full as string is calling Group.full_pattern with self, pattern
+        return calling application_module.add with self->_app, "GET", full, handler
+
+    ## Registra una ruta `POST` bajo el prefijo.
+    weave post with pattern as string, handler as Handler into result of void to route_module.PatternError:
+        var full as string is calling Group.full_pattern with self, pattern
+        return calling application_module.add with self->_app, "POST", full, handler
+
+    ## Registra una ruta `PUT` bajo el prefijo.
+    weave put with pattern as string, handler as Handler into result of void to route_module.PatternError:
+        var full as string is calling Group.full_pattern with self, pattern
+        return calling application_module.add with self->_app, "PUT", full, handler
+
+    ## Registra una ruta `PATCH` bajo el prefijo.
+    weave patch with pattern as string, handler as Handler into result of void to route_module.PatternError:
+        var full as string is calling Group.full_pattern with self, pattern
+        return calling application_module.add with self->_app, "PATCH", full, handler
+
+    ## Registra una ruta `DELETE` bajo el prefijo.
+    weave delete with pattern as string, handler as Handler into result of void to route_module.PatternError:
+        var full as string is calling Group.full_pattern with self, pattern
+        return calling application_module.add with self->_app, "DELETE", full, handler
+
+    ## Registra una ruta para cualquier método bajo el prefijo.
+    weave any with pattern as string, handler as Handler into result of void to route_module.PatternError:
+        var full as string is calling Group.full_pattern with self, pattern
+        return calling application_module.add with self->_app, "*", full, handler
+
+test "el grupo antepone el prefijo":
+    var app as Application is calling application_module.new_application
+    var api as Group is calling group_with_prefix with sigil of app, "/api"
+    calling ward.assert_eq_string with (calling Group.full_pattern with sigil of api, "/users"), "/api/users"
+    calling ward.assert_eq_string with (calling Group.full_pattern with sigil of api, "/"), "/api"
+    calling application_module.free_application with sigil of app

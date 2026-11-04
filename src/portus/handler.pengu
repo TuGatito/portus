@@ -28,3 +28,34 @@ weave ok_void into result of void to HttpError:
 ## `result of void to HttpError` con fallo.
 weave err_void with failure as HttpError into result of void to HttpError:
     return calling err_of with failure
+
+## Firma de un middleware: recibe su configuración y el contexto.
+##
+## Un middleware **no** tiene `next`: corre antes (o después) de las rutas y
+## puede responder o devolver un fallo, que corta la cadena.
+alias MiddlewareFn as weave with data as ref to void, context as ref to Context into result of void to HttpError
+
+## Firma de un handler de error (`on_error`).
+alias ErrorHandler as weave with context as ref to Context, failure as HttpError into result of void to HttpError
+
+## Un middleware con su configuración, sin closures.
+##
+## `data` apunta a memoria que posee la `Application` (su arena), no el
+## middleware; `invoke` la recupera con `transmute data to ref to T`.
+rune Middleware:
+    ## Qué ejecutar.
+    invoke as MiddlewareFn
+    ## Configuración del middleware (o `null` si no necesita).
+    data as ref to void
+
+## Envuelve una función de middleware sin configuración.
+weave middleware with invoke as MiddlewareFn into Middleware:
+    return with invoke is invoke, data is transmute 0 to ref to void
+
+## Ejecuta un handler de ruta.
+weave invoke with handler as Handler, context as ref to Context into result of void to HttpError:
+    return calling handler with context
+
+## Ejecuta un middleware con su configuración.
+weave invoke_middleware with middleware as Middleware, context as ref to Context into result of void to HttpError:
+    return calling middleware.invoke with middleware.data, context

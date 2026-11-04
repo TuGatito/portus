@@ -52,10 +52,32 @@ weave user with context as ref to portus.Context into result of void to portus.H
     calling context.send_text with "user {who}"
     return calling portus.ok_void
 
+weave boom with context as ref to portus.Context into result of void to portus.HttpError:
+    return calling portus.err_void with (calling portus.bad_request with "boom")
+
+weave only_post with context as ref to portus.Context into result of void to portus.HttpError:
+    calling context.send_text with "posted"
+    return calling portus.ok_void
+
+weave tag with data as ref to void, context as ref to portus.Context into result of void to portus.HttpError:
+    calling context.set_header with "X-Portus", "1"
+    return calling portus.ok_void
+
+weave missing with context as ref to portus.Context into result of void to portus.HttpError:
+    calling context.send_status with 404, "sin ruta"
+    return calling portus.ok_void
+
 weave main into int:
     var app as portus.Application is calling portus.new_application
     let added as result of void to portus.PatternError is calling portus.get with sigil of app, "/", hello
     let named as result of void to portus.PatternError is calling portus.get with sigil of app, "/users/:name", user
+    let broken as result of void to portus.PatternError is calling portus.get with sigil of app, "/boom", boom
+    let posted as result of void to portus.PatternError is calling portus.post with sigil of app, "/only-post", only_post
+    var api as portus.Group is calling portus.new_group with sigil of app, "/api"
+    let grouped as result of void to portus.PatternError is calling api.get with "/ping", hello
+    var mw as portus.Middleware is calling portus.middleware with tag
+    calling portus.use with sigil of app, mw
+    calling portus.on_not_found with sigil of app, missing
     let served as result of int to string is calling portus.serve with sigil of app, $port
     let bound as int is served or:
         calling spark.println with "no se pudo escuchar"
@@ -89,6 +111,20 @@ user_body="$(curl -sf --max-time 3 "http://127.0.0.1:$port/users/ada")" || {
 
 code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:$port/nope")"
 [ "$code" = "404" ] || { echo "FAIL: se esperaba 404, llegó $code"; exit 1; }
+nf="$(curl -s --max-time 3 "http://127.0.0.1:$port/nope")"
+[ "$nf" = "sin ruta" ] || { echo "FAIL: on_not_found devolvió '$nf'"; exit 1; }
+
+hdr="$(curl -s -D - -o /dev/null --max-time 3 "http://127.0.0.1:$port/")"
+echo "$hdr" | grep -qi "^X-Portus: 1" || { echo "FAIL: falta la cabecera del middleware"; exit 1; }
+
+grouped_body="$(curl -s --max-time 3 "http://127.0.0.1:$port/api/ping")"
+[ "$grouped_body" = "hola desde portus" ] || { echo "FAIL: grupo /api -> '$grouped_body'"; exit 1; }
+boom_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:$port/boom")"
+[ "$boom_code" = "400" ] || { echo "FAIL: err_void debía dar 400, dio $boom_code"; exit 1; }
+
+allow="$(curl -s -D - -o /dev/null --max-time 3 "http://127.0.0.1:$port/only-post")"
+echo "$allow" | grep -qi "^Allow: POST" || { echo "FAIL: 405 sin Allow"; exit 1; }
+[ "$(echo "$allow" | head -1 | grep -c ' 405 ')" = "1" ] || { echo "FAIL: se esperaba 405"; exit 1; }
 
 # Keep-alive: dos peticiones por la misma conexión.
 resp="$(

@@ -202,7 +202,7 @@ siguiente). Todo hecho y verificado:
 **Siguiente: F1** (router, contexto, dispatcher, middlewares) según
 [`portus-plan.md`](portus-plan.md).
 
-### F1a — en curso (router + despacho)
+### F1a — cerrado (router + despacho)
 
 Hecho y verificado por el gate e2e:
 
@@ -220,9 +220,30 @@ Hecho y verificado por el gate e2e:
 Bug 11 del compilador (lista vacía con `-Wunused-variable`) arreglado y
 publicado en 0.28.7 con `tests/regress_empty_list.sh`.
 
-Pendiente de F1: middlewares (`Before`/`Finisher`), subida de cuerpo, 405 con
-`Allow`, `HEAD` automático, `mount`, y los tests unitarios de `route` y
-`application`.
+Commit `4d23ed4 f1a: router, contexto y dispatcher con gate e2e de rutas`.
+
+### F1b — cerrado (middlewares, hooks y grupos)
+
+- `handler.pengu`: `Middleware` (thick: `invoke` + `data`), `MiddlewareFn`,
+  `ErrorHandler`, `middleware`, `invoke_middleware`.
+- `application.pengu`: `_befores`/`_finishers` con prefijo, hooks
+  `on_error`/`on_not_found`/`on_start`/`on_shutdown` (campo no-op + flag
+  `_has_*` por el bug 12), `use`/`use_at`/`after`, `_handle_failure`,
+  `_join_methods`, 405 con `Allow`, `respond_error`.
+- `group.pengu`: `Group` (aplicación + prefijo) con `get/post/put/patch/delete/any`
+  y el ritual `full_pattern`; la fachada expone `new_group`.
+- Fachada: `use`, `use_at`, `after`, `on_error`, `on_not_found`, `on_start`,
+  `on_shutdown`, `middleware`, `bad_request`, `not_found`, `internal_error`,
+  `new_group`, alias `Middleware`/`ErrorHandler`/`MiddlewareFn`/`AppHook`/`Group`.
+- Tests: 14 unitarios (`psc test` → `All 14 test(s) passed.`; 10 de `route`,
+  3 de `error`, 1 de `group`).
+- Gate: `tests/e2e_hello.sh` prueba `/`, `/users/:name`, `/api/ping` (grupo),
+  `/boom` (400), `POST /only-post` (405 + `Allow`), middleware `X-Portus`,
+  `on_not_found` propio y keep-alive → `OK e2e hello (puerto 52503)`.
+
+Pendiente de F1 (cierre): ejemplos `examples/{hello-world,params,multi-router,
+route-middleware,error}`, `HEAD` automático, `mount`, y los ~60 tests del gate
+F1 de `portus-plan.md`.
 
 ---
 
@@ -239,8 +260,9 @@ portus/
 │       ├── transport.pengu     # Request/Response/ServeOptions + puente
 │       ├── route.pengu         # patrones y parámetros
 │       ├── error.pengu         # HttpError y su status
-│       ├── handler.pengu       # Handler + ok_void/err_void
+│       ├── handler.pengu       # Handler, Middleware, ok_void/err_void
 │       ├── context.pengu       # Context y sus métodos
+│       ├── group.pengu         # Group (prefijo de rutas)
 │       └── application.pengu   # Application, dispatch, serve
 ├── include/
 │   ├── portus_native.h         # servidor poll(2) + llhttp, header-only

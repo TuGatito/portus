@@ -25,6 +25,7 @@
 ## El servidor presta la aplicación mientras corre.
 import portus.application as application_module
 import portus.context as context_module
+import portus.group as group_module
 import portus.error
 import portus.handler as handler_module
 import portus.route as route_module
@@ -39,6 +40,11 @@ alias Request as transport.Request
 alias Response as transport.Response
 alias ServeOptions as transport.ServeOptions
 alias HttpError as error.HttpError
+alias ErrorHandler as handler_module.ErrorHandler
+alias Middleware as handler_module.Middleware
+alias MiddlewareFn as handler_module.MiddlewareFn
+alias AppHook as application_module.AppHook
+alias Group as group_module.Group
 
 ## Versión del paquete.
 const PORTUS_VERSION as string is "0.1.0"
@@ -95,6 +101,57 @@ weave serve with app as ref to Application, port as int into result of int to st
     var options as ServeOptions is calling transport.base_options
     set options.port is port
     return calling application_module.serve_with with app, options
+
+## Crea un grupo de rutas bajo `prefix` (`"/api"`).
+##
+## ## Memoria
+## El `Group` presta la aplicación: no la libera ni la copia.
+weave new_group with app as ref to Application, prefix as string into Group:
+    return calling group_module.group_with_prefix with app, prefix
+
+## Envuelve una función de middleware en un `Middleware` con su `data`.
+weave middleware with invoke as MiddlewareFn into Middleware:
+    return calling handler_module.middleware with invoke
+
+## Añade un middleware para todas las rutas.
+weave use with app as ref to Application, layer as Middleware into void:
+    return calling application_module.use with app, layer
+
+## Añade un middleware solo bajo `prefix`.
+weave use_at with app as ref to Application, prefix as string, layer as Middleware into void:
+    return calling application_module.use_at with app, prefix, layer
+
+## Añade un middleware que corre después de la ruta.
+weave after with app as ref to Application, layer as Middleware into void:
+    return calling application_module.after with app, layer
+
+## Registra el manejador de errores de la aplicación.
+weave on_error with app as ref to Application, handler as ErrorHandler into void:
+    return calling application_module.on_error with app, handler
+
+## Registra el manejador de rutas no encontradas.
+weave on_not_found with app as ref to Application, handler as Handler into void:
+    return calling application_module.on_not_found with app, handler
+
+## Registra un hook que corre al arrancar.
+weave on_start with app as ref to Application, hook as AppHook into void:
+    return calling application_module.on_start with app, hook
+
+## Registra un hook que corre al apagar.
+weave on_shutdown with app as ref to Application, hook as AppHook into void:
+    return calling application_module.on_shutdown with app, hook
+
+## Crea un `HttpError` 400.
+weave bad_request with message as string into HttpError:
+    return calling error.bad_request with message
+
+## Crea un `HttpError` 404.
+weave not_found into HttpError:
+    return calling error.not_found
+
+## Crea un `HttpError` 500.
+weave internal_error into HttpError:
+    return calling error.internal
 
 ## Ping del binding nativo (humo de instalación).
 weave ping with n as int into int:

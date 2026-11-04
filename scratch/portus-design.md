@@ -88,60 +88,76 @@ Esto no es un detalle: condiciona la API. Por eso los handlers devuelven
 
 ## 4. Tipos del núcleo
 
-### 4.1 `Handler`
+### 4.1 `Handler` y `Middleware`
 
-Un handler es un valor. Hay dos formas, y una sola runa las contiene:
+Handler y middleware son **dos tipos distintos**, no una runa con unión: las
+firmas difieren y una runa con las dos firmas no se puede emitir sin una unión
+que el lenguaje no tiene. (Desviación aprobada respecto al borrador original.)
 
 ```pengu
-rune Handler:
-    shape as HandlerShape      # omen: Thin | Thick
-    thin as weave with context as ref to Context into result of void to HttpError
-    thick as weave with data as ref to void, context as ref to Context into result of void to HttpError
+# src/portus/handler.pengu
+alias Handler as weave with context as ref to Context into result of void to HttpError
+alias MiddlewareFn as weave with data as ref to void, context as ref to Context into result of void to HttpError
+alias ErrorHandler as weave with context as ref to Context, failure as HttpError into result of void to HttpError
+alias AppHook as weave with app as ref to Application into void
+
+rune Middleware:
+    invoke as MiddlewareFn
     data as ref to void
 ```
 
-- **Thin**: el caso normal. `weave hola with context as ref to Context into
-  result of void to HttpError`.
-- **Thick**: un handler con configuración (`data`). Lo usan los middlewares.
-  `invoke` recupera su config con `transmute data to ref to Config`.
+- **Thin** (`Handler`): el caso normal, sin configuración.
+- **Thick** (`Middleware`): configuración en `data`. `weave middleware` envuelve
+  un `MiddlewareFn`; el middleware recupera su config con
+  `transmute data to ref to Config`.
 
-No hay closures. La configuración vive en memoria que **posee la
-`Application`** (arena, §5), no el handler.
+No hay closures y no hay despacho dinámico: todo son punteros a función con
+nombre. `Middleware` **no** se banea (no posee `data`); la configuración vive en
+la arena de la `Application` (§5).
 
-### 4.2 `Layer`
-
-Una entrada de la cadena:
+### 4.2 Entradas de la cadena
 
 ```pengu
-rune Layer:
-    method as int          # 0 = cualquiera; si no, código del verbo
-    pattern as Pattern     # patrón compilado (segmentos)
+rune RouteEntry:
+    method as string      # "GET", "POST", …, "*" = cualquiera
+    pattern as Pattern    # patrón compilado (segmentos) + score
     handler as Handler
-    is_prefix as bool      # true para `use` (prefijo), false para ruta exacta
-    score as int           # especificidad, para ordenar rutas
+    score as int          # especificidad; ordena las rutas
+
+rune MiddlewareEntry:
+    prefix as string      # "" = todas las rutas
+    middleware as Middleware
 ```
+
+`_befores` y `_finishers` son `list of MiddlewareEntry` en orden de registro;
+`_routes` es `list of RouteEntry` ordenada por `score` al insertar.
 
 ### 4.3 `Application`
 
 ```pengu
 rune Application:
-    _config as Config
-    _befores as list of Layer     # en orden de registro
-    _routes as list of Layer      # ordenadas por score
-    _finishers as list of Layer   # en orden de registro
-    _arena as Arena               # configs de middleware
-    _state as map of string to string
-    _on_error as maybe Handler
-    _on_not_found as maybe Handler
-    _on_start as maybe weave with app as ref to Application into void
-    _on_shutdown as maybe weave with app as ref to Application into void
-    _server as ref to void        # handle nativo, null si no escucha
+    _routes as list of RouteEntry
+    _befores as list of MiddlewareEntry
+    _finishers as list of MiddlewareEntry
+    _arena as arena.Arena            # configs de middleware
+    _on_error as ErrorHandler        # no-op por defecto
+    _has_on_error as bool
+    _on_not_found as Handler         # no-op por defecto
+    _has_on_not_found as bool
+    _on_start as AppHook             # no-op por defecto
+    _has_on_start as bool
+    _on_shutdown as AppHook          # no-op por defecto
+    _has_on_shutdown as bool
     _sealed as bool
 ```
 
+`maybe weave …` no se usa para los hooks: `some (fn)` con un puntero a función
+emite C inválido en 0.28.7 (bug 12), así que se guarda el no-op + un flag
+`_has_*`. `_state` y `_config` llegarán en F2/F3 cuando exista el tipo `Config`.
+
 **Ownership:** se crea una vez (`new_application`), se registra, se presta
-(`ref to`), se banea una vez. Copiarla después de registrar es un bug; se
-detecta con `_sealed` en modo debug.
+(`ref to`), se banea una vez con `free_application`. Copiarla después de
+registrar es un bug; `_sealed` lo detectará en modo debug (F5).
 
 ### 4.4 `Context`, `Request`, `Response`
 

@@ -2,7 +2,7 @@
 
 > Bugs del compilador que portus encontró. Todos están confirmados con una
 > reproducción mínima. Estado a 2026-11-04: **1–7 y 11 arreglados** y publicados
-> en 0.28.1–0.28.7; **3, 8, 9 y 10 abiertos** (portus usa workarounds).
+> en 0.28.1–0.28.7; **3, 8, 9, 10, 12, 13 y 14 abiertos** (portus usa workarounds).
 >
 > Checkout: `/home/tugatito/Documentos/GitHub/PenguScript` (v0.28.7, `build/psc`).
 > Cada arreglo lleva su test en `tests/regress_*.sh`, su entrada en `CHANGELOG.md`
@@ -25,6 +25,9 @@
 | 9 | P1 | Bloque (`do:` / `if` multilínea) en posición de valor emite sólo la última expresión | parser+codegen (paridad) | abierto | `if c then a else b` |
 | 10 | P1 | Un `omen` algebraico no se puede usar en posición de valor | codegen/sema de omens | abierto | `rune { kind, message }` |
 | 11 | P2 | `[]` emite una temporal sin usar (`-Wunused-variable`) | `src/psc/codegen/expr.pengu` | 0.28.7 | ya no hace falta |
+| 12 | P1 | `maybe Fn` / `result of … to …` con payload de tipo función emite C inválido | `src/psc/codegen/expr.pengu` (`result_ctor`) | abierto | campo plano + flag `bool` |
+| 13 | P2 | Llamar un método a través de un campo `ref` emite `T**`; `set x.campo` sobre un `ref` | codegen (receptores) | abierto | enlazar a un local |
+| 14 | P1 | Un módulo llamado `router`/`routes` no emite sus weaves libres | codegen/DCE (sin reducir) | abierto | módulo `portus.group` |
 
 ---
 
@@ -465,7 +468,124 @@ que portus (que usa `[]` en varios sitios) compila sin avisos.
 
 ---
 
-## 12. Cómo se arreglan (proceso)
+## 12. P1 — `maybe`/`result` con payload de puntero a función emiten C inválido
+
+Reproducción (`/tmp/b12/src/main.pengu`):
+
+```pengu
+alias Fn as weave with x as int into int
+
+rune App:
+    call as maybe Fn
+
+weave twice with x as int into int:
+    return x * 2
+
+weave main into int:
+    var app as App is with call is maybe none
+    set app.call is some (twice)
+    if app.call is present:
+        let f as Fn is app.call.value
+        calling spark.println with "{calling f with 21}"
+    return 0
+```
+
+C generado (recortado):
+
+```c
+app.call = __extension__(({ int32_t (*)(int32_t) _p = (main_twice); int32_t (*)(int32_t)* _h = (int32_t (*)(int32_t)*)malloc(sizeof(int32_t (*)(int32_t))); ... }));
+```
+
+`gcc` falla con `expected identifier or '(' before ')' token` (el declarador de
+`_p` no lleva nombre dentro de `(*)`), luego `_h`/`_p` «no se declararon» y
+`app.call.value` da `expected ')' before '*'`.
+
+**Causa.** `result_ctor` en `src/psc/codegen/expr.pengu` (~línea 1339) monta el
+payload como `{c_type} _p = {valor};` y `{c_type}* _h = …`; con un tipo función
+`c_type` es `R (*)(A)`, y el nombre tiene que ir dentro del `(*)`. Ya existe el
+helper `name_fn_declarator` en `src/psc/codegen/function.pengu:171`, que inserta
+el nombre en el hueco `(*)` (`has_fn_slot` en `:196` detecta si hay hueco).
+
+**Arreglo propuesto.** En los dos constructores (`maybe`/`some` ~1339-1355 y
+`ok_of`/`err_of` ~1430-1450):
+
+```pengu
+var paydecl as string is pt
+if calling has_fn_slot with pt:
+    set paydecl is calling name_fn_declarator with pt, "_p"
+else:
+    set paydecl is "{pt} _p"
+```
+
+y para el hueco del heap, `name_fn_declarator with pt, "*_h"` cuando hay hueco
+(si no, el `{pt}* _h` actual). Alternativa más simple y uniforme: `void *_h` +
+`memcpy` del payload, que además es lo que documenta el lenguaje («`some`
+memcpy the payload»).
+
+**Workaround en portus:** campos planos con un flag `_has_on_error`,
+`_has_on_not_found`, `_has_on_start`, `_has_on_shutdown`.
+
+---
+
+## 13. P2 — Llamar un método a través de un campo `ref` emite `T**`
+
+Síntomas vistos en `context.pengu`:
+
+```pengu
+calling ctx->response.is_sent     # emite &(ctx->response) → Response**
+set ctx.params is …               # emite ctx.params sobre un puntero
+```
+
+Errores: `se pasa el argumento 1 de ‘Response_is_sent’ desde un tipo de puntero
+incompatible` y `‘ctx’ es un puntero; ¿pretendía utilizar ‘->’?`. El mismo patrón
+aparece con `calling ctx->request.path`.
+
+**Workaround en portus:** enlazar el campo a un local
+(`var response as ref to transport.Response is self->response`) o exponer
+métodos en `Context` (`calling ctx.is_sent`). Hay que revisar `method_receiver`
+en `src/psc/codegen/expr.pengu` para que desenvuelva también el `TkRef` del
+*campo* antes de decidir si hace falta `&`.
+
+---
+
+## 14. P1 — Un módulo llamado `router`/`routes` no emite sus weaves libres
+
+En el proyecto portus, `src/portus/router.pengu` (id `portus.router`) compila
+(`psc check` limpio) pero sus **weaves libres** no aparecen en el bundle y las
+llamadas desde la fachada salen sin prefijo:
+
+```c
+/* src/portus.pengu */  return router_with_prefix(app, prefix);
+/* no existe ni portus_router_router_with_prefix ni router_with_prefix */
+```
+
+Los métodos de `enchanting` de ese módulo sí se emiten (`Router_get`,
+`Router_full_pattern`). Pasa igual con `--no-dce` y tras borrar `build/`.
+
+Matriz observada (mismo contenido, solo cambia el nombre del archivo/módulo):
+
+| id del módulo | ¿emite sus weaves libres? |
+|---|---|
+| `portus.router` | **no** |
+| `portus.routes` | **no** |
+| `portus.routing` | sí |
+| `portus.route_group` | sí |
+| `portus.router2` | sí |
+| `portus.group` | sí |
+| `portus.prefix` | sí |
+
+Un proyecto mínimo aparte (`/tmp/mr`, módulo `portus.router` + fachada que lo
+importa) **sí** emite `portus_router_*`, así que el fallo depende de una
+interacción con el resto del proyecto portus (posiblemente el módulo
+`portus.route`, cuyo id es prefijo de `portus.router`, o el DCE). No se ha
+reducido todavía.
+
+**Workaround en portus:** el módulo se llama `portus.group` y el tipo `Group`.
+Pendiente: reducirlo con una copia del repo e incluirlo aquí como repro.
+
+---
+
+## 15. Cómo se arreglan (proceso)
 
 1. Rama por bug en el checkout de PenguScript:
    `fix/deps-derive-name`, `fix/alias-fn-call`, `fix/generic-forward`,
@@ -497,7 +617,7 @@ que portus (que usa `[]` en varios sitios) compila sin avisos.
 
 ---
 
-## 13. Notas de ergonomía (no son bugs, pero duelen)
+## 16. Notas de ergonomía (no son bugs, pero duelen)
 
 Detectadas escribiendo los spikes; no bloquean portus, pero conviene saberlas:
 
@@ -515,6 +635,10 @@ Detectadas escribiendo los spikes; no bloquean portus, pero conviene saberlas:
   puntero. Para el puente C de portus hizo falta un `antiquus` de una línea:
   `return (void *)app;`. Síntoma típico: ASan reporta `stack-buffer-overflow`
   leyendo dentro del marco del que pasó el puntero.
+- `maybe none` es la única forma de escribir el vacío (`none` suelto es E0004).
+- `calling a.b.c with …` (cadena cualificada) se resuelve mal si en el módulo
+  actual hay una función con el mismo nombre final (bug 8): renombra el helper
+  local (`new_group`, `new_router`) o el de la biblioteca.
 - `psc add <ruta>` **no refresca** una dependencia de tipo `path` ya instalada:
   sigue usando `lib/<nombre>/` copiado. Para probar cambios locales hay que
   `rm -rf lib/<nombre>` (o `rm -rf lib` + `pengu.lock`) y volver a añadir.

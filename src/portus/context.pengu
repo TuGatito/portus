@@ -13,6 +13,7 @@
 ##
 ## ## Memoria
 ## El despachador crea y libera el contexto; no lo guardes.
+import std.scrolls
 import portus.route as route
 import portus.transport as transport
 
@@ -35,53 +36,84 @@ enchanting Context:
 
     ## Método HTTP de la petición (`GET`, `POST`, …).
     weave method into string:
-        return calling self->request.method
+        var request as ref to transport.Request is self->request
+        return calling request.method
 
     ## Ruta pedida, sin query string.
     weave path into string:
-        return calling self->request.path
+        var request as ref to transport.Request is self->request
+        return calling request.path
 
     ## Query string cruda (`a=1&b=2`) o `""`.
     weave query into string:
-        return calling self->request.query
+        var request as ref to transport.Request is self->request
+        return calling request.query
 
     ## Fija una cabecera de la respuesta.
     ##
     ## ## Memoria
     ## `name` y `value` se copian en la respuesta.
     weave set_header with name as string, value as string into void:
-        calling self->response.set_header with name, value
+        var response as ref to transport.Response is self->response
+        calling response.set_header with name, value
 
     ## Añade la cabecera `Content-Type`.
     weave set_content_type with value as string into void:
-        calling self->response.set_header with "Content-Type", value
+        var response as ref to transport.Response is self->response
+        calling response.set_header with "Content-Type", value
 
     ## Responde con texto y `Content-Type: text/plain; charset=utf-8`.
     ##
     ## ## Memoria
     ## El cuerpo se copia en la respuesta.
     weave send_text with body as string into void:
-        calling self->response.set_header with "Content-Type", "text/plain; charset=utf-8"
-        calling self->response.write_text with body
-        calling self->response.mark_sent
+        var response as ref to transport.Response is self->response
+        calling response.set_header with "Content-Type", "text/plain; charset=utf-8"
+        calling response.write_text with body
+        calling response.mark_sent
 
     ## Responde con HTML.
     weave send_html with body as string into void:
-        calling self->response.set_header with "Content-Type", "text/html; charset=utf-8"
-        calling self->response.write_text with body
-        calling self->response.mark_sent
+        var response as ref to transport.Response is self->response
+        calling response.set_header with "Content-Type", "text/html; charset=utf-8"
+        calling response.write_text with body
+        calling response.mark_sent
 
     ## Fija el código de estado sin enviar cuerpo todavía.
     weave set_status with code as int into void:
-        calling self->response.set_status with code
+        var response as ref to transport.Response is self->response
+        calling response.set_status with code
 
     ## Responde con un código y un cuerpo de texto.
     weave send_status with code as int, body as string into void:
-        calling self->response.set_status with code
-        calling self->response.set_header with "Content-Type", "text/plain; charset=utf-8"
-        calling self->response.write_text with body
-        calling self->response.mark_sent
+        var response as ref to transport.Response is self->response
+        calling response.set_status with code
+        calling response.set_header with "Content-Type", "text/plain; charset=utf-8"
+        calling response.write_text with body
+        calling response.mark_sent
 
     ## ¿El handler ya respondió?
     weave is_sent into bool:
-        return calling self->response.is_sent
+        var response as ref to transport.Response is self->response
+        return calling response.is_sent
+
+    ## Valor de una cabecera de la petición (sin distinguir mayúsculas).
+    ##
+    ## ## Retorno
+    ## Copia propia, o `none` si la cabecera no vino.
+    weave header with name as string into maybe string:
+        var request as ref to transport.Request is self->request
+        var wanted as string is calling scrolls.to_lower with name
+        var count as int is calling request.header_count
+        var i as int is 0
+        while i < count:
+            var key as string is calling request.header_name with i
+            var key_lower as string is calling scrolls.to_lower with key
+            if (calling scrolls.compare with key_lower, wanted) == 0:
+                banish key_lower
+                banish wanted
+                return some (calling request.header_value with i)
+            banish key_lower
+            set i is i + 1
+        banish wanted
+        return maybe none
