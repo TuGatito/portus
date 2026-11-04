@@ -1,0 +1,119 @@
+## portus.rate_limit — límite de peticiones por cliente en ventana fija.
+##
+## El cliente se identifica por el primer valor de `X-Forwarded-For` (o
+## `"local"`). El estado vive en memoria del proceso y se recicla cuando pasa
+## la ventana; si la tabla crece por encima de `MAX_CLIENTS` se vacía entera
+## para acotar la memoria.
+##
+## ## Ejemplo
+## ```pengu
+## calling portus.use_rate_limit with sigil of app, 60, 60000
+## ```
+import std.arena as arena_module
+import std.scrolls
+import portus.application as application_module
+import portus.context as context_module
+import portus.error as error_module
+import portus.handler as handler_module
+import portus.native as native_module
+import portus.text as text
+
+## Clientes recordados antes de vaciar la tabla.
+const MAX_CLIENTS as int is 4096
+
+## Configuración del límite.
+rune Rule:
+    ## Peticiones permitidas por ventana.
+    max_requests as int
+    ## Ventana en milisegundos.
+    window_ms as long
+
+## Contador de un cliente.
+rune Slot:
+    ## Peticiones en la ventana.
+    count as int
+    ## Fin de la ventana (ms monótonos).
+    reset_at as long
+
+## Tabla de contadores. Es el sujeto de este módulo.
+weave slots into ref to map of string to Slot:
+    static var table as map of string to Slot is map of string to Slot
+    return sigil of table
+
+## Identifica al cliente.
+##
+## ## Memoria
+## Devuelve un string propio; libéralo con `banish`.
+weave client_key with context as ref to context_module.Context into string:
+    let forwarded as maybe string is calling context.header with "x-forwarded-for"
+    if forwarded.is_present:
+        var raw as string is forwarded.value
+        var comma as int is -1
+        var i as int is 0
+        while i < (calling scrolls.len with raw):
+            if (raw at i) == ",":
+                set comma is i
+                set i is calling scrolls.len with raw
+            else:
+                set i is i + 1
+        if comma > 0:
+            return calling scrolls.substring with raw, 0, comma
+        return calling text.copy with raw
+    return calling text.copy with "local"
+
+## Cuenta la petición y responde 429 si se pasa del límite.
+weave _limit with data as ref to void, context as ref to context_module.Context into result of void to error_module.HttpError:
+    var rule as ref to Rule is transmute data to ref to Rule
+    var table as ref to map of string to Slot is calling slots
+    var key as string is calling client_key with context
+    var now as long is calling native_module.portus_native_now_ms
+    var count as int is 1
+    var reset_at as long is now + rule->window_ms
+    if calling table.contains with key:
+        var current as Slot is calling table.get with key
+        if current.reset_at > now:
+            set count is current.count + 1
+            set reset_at is current.reset_at
+    if calling table.len >= MAX_CLIENTS:
+        calling table.clear
+    calling table.put with key, (with count is count, reset_at is reset_at)
+    if count <= rule->max_requests:
+        return calling handler_module.ok_void
+    var retry as int is 1
+    if reset_at > now:
+        set retry is ((reset_at - now) / 1000) to int
+        if retry < 1:
+            set retry is 1
+    calling context.set_status with 429
+    var retry_text as string is "{retry}"
+    defer banish retry_text
+    calling context.set_header with "Retry-After", retry_text
+    var body as string is "demasiadas peticiones"
+    defer banish body
+    calling context.send_text with body
+    calling context.mark_sent
+    return calling handler_module.ok_void
+
+## Convierte la configuración en el `data` opaco del middleware.
+antiquus _raw_rule with rule as ref to Rule into ref to void:
+    r"""
+return (void *)rule;
+"""
+
+## Aplica el límite solo a las rutas bajo `prefix`.
+weave use_at with app as ref to application_module.Application, prefix as string, max_requests as int, window_ms as long into void:
+    var arena as ref to arena_module.Arena is calling application_module.arena_of with app
+    var rule as ref to Rule is calling arena_module.arena_alloc_one of Rule with arena
+    set rule->max_requests is max_requests
+    set rule->window_ms is window_ms
+    calling application_module.use_at with app, prefix, (calling handler_module.middleware_with with _limit, (calling _raw_rule with rule))
+    return
+
+## Aplica el límite a toda la aplicación.
+weave use with app as ref to application_module.Application, max_requests as int, window_ms as long into void:
+    var arena as ref to arena_module.Arena is calling application_module.arena_of with app
+    var rule as ref to Rule is calling arena_module.arena_alloc_one of Rule with arena
+    set rule->max_requests is max_requests
+    set rule->window_ms is window_ms
+    calling application_module.use with app, (calling handler_module.middleware_with with _limit, (calling _raw_rule with rule))
+    return

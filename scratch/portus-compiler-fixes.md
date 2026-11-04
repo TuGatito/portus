@@ -2,9 +2,9 @@
 
 > Bugs del compilador que portus encontró. Todos están confirmados con una
 > reproducción mínima. Estado a 2026-11-04: **1–7, 11 y 12 arreglados** y
-> publicados en 0.28.1–0.28.8; **3, 8, 9, 10, 14 y 15 abiertos** (portus usa
-> workarounds); 13 resultó ser otra cara de 15 y no se reproduce con el
-> receptor en un local.
+> publicados en 0.28.1–0.28.8; **3, 8, 9, 10, 14, 15, 19 y 20 abiertos**
+> (portus usa workarounds); 13 resultó ser otra cara de 15 y no se reproduce
+> con el receptor en un local; 16–18, 19 y 20 son hallazgos de F3–F5.
 >
 > Checkout: `/home/tugatito/Documentos/GitHub/PenguScript` (v0.28.8, `build/psc`).
 > Cada arreglo lleva su test en `tests/regress_*.sh`, su entrada en `CHANGELOG.md`
@@ -32,6 +32,10 @@
 | 14 | P1 | Un módulo llamado `router`/`routes` no emite sus weaves libres | codegen/DCE (sin reducir) | abierto | módulo `portus.group` |
 | 15 | P1 | Un nombre suelto resuelve a la función del módulo **consumidor**, no a la del importado | sema (resolución de nombres) | abierto | calificar `modulo.fn` |
 | 16 | P2 | `"{m or else \"x\"}"` imprime el texto literal, sin error | parser de interpolación | abierto | enlazar antes de interpolar |
+| 17 | P2 | Un `rune` local con el nombre de un tipo importado genera C inválido | codegen (nombres de tipos) | abierto | renombrar el rune |
+| 18 | P2 | Un `alias` en posición de retorno no acepta el tipo subyacente | sema (retornos) | abierto | devolver el tipo concreto |
+| 19 | P1 | Un `or:` tras una llamada se liga al último argumento y pasa `NULL` | parser (postfijos) | abierto | enlazar el resultado |
+| 20 | P2 | La caché de `psc build` ignora cambios en headers C | driver (caché) | abierto | `--no-cache` tras tocar headers |
 
 ---
 
@@ -661,33 +665,6 @@ ajenos al grafo de imports de ese archivo.
 
 ---
 
-## 17. Notas de ergonomía (no son bugs, pero duelen)
-
-Detectadas escribiendo los spikes; no bloquean portus, pero conviene saberlas:
-
-- `with` exige la forma `campo is valor`; `Runa with campo is v` (prefijado por
-  tipo) es E0000. El tipo se infiere del destino.
-- `at` es operador, no método: `lista at 0`, no `calling lista.at with 0`.
-- Toda sentencia necesita prefijo `calling`/`let`/`var`/`set`/`return`; una
-  llamada suelta no es sentencia.
-- `let` produce `ref to frozen T`; para mutar hace falta `var`.
-- El literal de lista vacía necesita tipo: `let xs as list of Handler is []`.
-- Un literal de runa genérica necesita una variable tipada intermedia.
-- `io.println` no existe; `io.write_stdout` sí (devuelve `bool`).
-- Convertir un `ref to T` a `ref to void` con `transmute x to ref to void`
-  emite `(void *)&x` (la dirección de la variable puntero), no el valor del
-  puntero. Para el puente C de portus hizo falta un `antiquus` de una línea:
-  `return (void *)app;`. Síntoma típico: ASan reporta `stack-buffer-overflow`
-  leyendo dentro del marco del que pasó el puntero.
-- `maybe none` es la única forma de escribir el vacío (`none` suelto es E0004).
-- `calling a.b.c with …` (cadena cualificada) se resuelve mal si en el módulo
-  actual hay una función con el mismo nombre final (bug 8): renombra el helper
-  local (`new_group`, `new_router`) o el de la biblioteca.
-- `psc add <ruta>` **no refresca** una dependencia de tipo `path` ya instalada:
-  sigue usando `lib/<nombre>/` copiado. Para probar cambios locales hay que
-  `rm -rf lib/<nombre>` (o `rm -rf lib` + `pengu.lock`) y volver a añadir.
-  Conviene documentarlo en `docs/LIBRARIES.md`.
-
 ## 16. P2 — Interpolar un `or else` dentro de `{}` imprime el texto literal
 
 **Impacto:** silencioso: el string sale con `{q or else "none"}` en vez del
@@ -776,3 +753,87 @@ weave build into Wrapped:
 
 **Arreglo propuesto:** en la comprobación de retorno, desenvolver `TkAlias`
 igual que ya se hace para llamadas (bug 2) y para `c_type` (0.28.2).
+
+---
+
+## 19. P1 — Un `or:` tras una llamada se liga al último argumento
+
+**Impacto:** el programa compila y luego hace `call 0x0` (SIGSEGV) al despachar.
+Costó una sesión de depuración con `gdb`.
+
+**Repro:**
+```pengu
+weave hello with context as ref to Context into result of void to HttpError:
+    return calling ok_void
+
+weave main into int:
+    var app as Application is calling new_application
+    calling get with sigil of app, "/", hello or:
+        return 1
+    return 0
+```
+
+**Síntoma:** el C generado pasa `NULL` como último argumento
+(`portus_application_add(&app, "GET", "/", 0)`) y el servidor muere al primer
+request con `0x0000000000000000 in ?? ()` desde
+`portus_application__invoke_entry`.
+
+**Causa:** el parser acepta `or:` sobre una llamada pero lo asocia al último
+argumento en vez de al resultado de la llamada.
+
+**Workaround (portus y ejemplos):** enlazar el resultado antes:
+```pengu
+let added as result of void to PatternError is calling get with sigil of app, "/", hello
+```
+
+**Arreglo propuesto:** en el parseo de postfijos, `or:`/`or else`/`or return`
+deben aplicarse al nodo de llamada completo, no al argumento.
+
+---
+
+## 20. P2 — La caché de `psc build` no ve cambios en headers C incluidos
+
+**Impacto:** silencioso y peligroso: tras tocar `include/*.h` de una dependencia
+`path`, el consumidor sigue compilando el bundle cacheado y enlaza el código
+viejo. Produjo un `stack-buffer-overflow` fantasma durante una hora.
+
+**Repro:** compilar un consumidor, cambiar una función `static` del header de la
+dependencia, volver a `psc build` sin `--no-cache`: el binario no cambia.
+
+**Causa:** la clave de caché no incluye el contenido/mtime de los headers que
+entran por `include "..."`.
+
+**Workaround:** `psc build … --no-cache` después de tocar headers; en el e2e de
+seguridad el consumidor es nuevo, así que no hace falta.
+
+**Arreglo propuesto:** añadir los headers resueltos (y los de `include_dir`) a
+la clave de caché.
+
+---
+
+## 21. Notas de ergonomía (no son bugs, pero duelen)
+
+Detectadas escribiendo los spikes; no bloquean portus, pero conviene saberlas:
+
+- `with` exige la forma `campo is valor`; `Runa with campo is v` (prefijado por
+  tipo) es E0000. El tipo se infiere del destino.
+- `at` es operador, no método: `lista at 0`, no `calling lista.at with 0`.
+- Toda sentencia necesita prefijo `calling`/`let`/`var`/`set`/`return`; una
+  llamada suelta no es sentencia.
+- `let` produce `ref to frozen T`; para mutar hace falta `var`.
+- El literal de lista vacía necesita tipo: `let xs as list of Handler is []`.
+- Un literal de runa genérica necesita una variable tipada intermedia.
+- `io.println` no existe; `io.write_stdout` sí (devuelve `bool`).
+- Convertir un `ref to T` a `ref to void` con `transmute x to ref to void`
+  emite `(void *)&x` (la dirección de la variable puntero), no el valor del
+  puntero. Para el puente C de portus hizo falta un `antiquus` de una línea:
+  `return (void *)app;`. Síntoma típico: ASan reporta `stack-buffer-overflow`
+  leyendo dentro del marco del que pasó el puntero.
+- `maybe none` es la única forma de escribir el vacío (`none` suelto es E0004).
+- `calling a.b.c with …` (cadena cualificada) se resuelve mal si en el módulo
+  actual hay una función con el mismo nombre final (bug 8): renombra el helper
+  local (`new_group`, `new_router`) o el de la biblioteca.
+- `psc add <ruta>` **no refresca** una dependencia de tipo `path` ya instalada:
+  sigue usando `lib/<nombre>/` copiado. Para probar cambios locales hay que
+  `rm -rf lib/<nombre>` (o `rm -rf lib` + `pengu.lock`) y volver a añadir.
+  Conviene documentarlo en `docs/LIBRARIES.md`.

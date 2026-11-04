@@ -1,0 +1,49 @@
+## Ejemplo: autenticación con Basic y JWT HS256.
+##
+## `GET /login?user=ada` devuelve un token; `/private` lo exige.
+
+import std.spark
+import portus
+
+const SECRET as string is "clave-de-ejemplo-no-usar-en-produccion"
+const PORT as int is 3000
+
+weave public with context as ref to portus.Context into result of void to portus.HttpError:
+    calling context.send_text with "cualquiera puede leer esto"
+    return calling portus.ok_void
+
+weave login with context as ref to portus.Context into result of void to portus.HttpError:
+    let user as maybe string is calling context.query_param with "user"
+    if name as string is user:
+        var claims as string is "{\"sub\":\"{name}\"}"
+        defer banish claims
+        var token as string is calling portus.jwt_sign with SECRET, claims
+        defer banish token
+        calling context.send_text with token
+        return calling portus.ok_void
+    calling context.set_status with 400
+    calling context.send_text with "falta ?user="
+    return calling portus.ok_void
+
+weave private with context as ref to portus.Context into result of void to portus.HttpError:
+    let claims as maybe string is calling portus.jwt_bearer with context, SECRET
+    if payload as string is claims:
+        calling context.send_text with "dentro: {payload}"
+        return calling portus.ok_void
+    return calling portus.err_void with (calling portus.error.unauthorized)
+
+weave basic with context as ref to portus.Context into result of void to portus.HttpError:
+    let user as maybe string is calling portus.basic_auth with context, "ada", "secreto"
+    if name as string is user:
+        calling context.send_text with "hola {name}"
+        return calling portus.ok_void
+    return calling portus.err_void with (calling portus.error.unauthorized)
+
+weave main into int:
+    var app as portus.Application is calling portus.new_application
+    let r1 as result of void to portus.PatternError is calling portus.get with sigil of app, "/", public
+    let r2 as result of void to portus.PatternError is calling portus.get with sigil of app, "/login", login
+    let r3 as result of void to portus.PatternError is calling portus.get with sigil of app, "/private", private
+    let r4 as result of void to portus.PatternError is calling portus.get with sigil of app, "/basic", basic
+    let served as result of int to string is calling portus.serve with sigil of app, PORT
+    return served or else 1

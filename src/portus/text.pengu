@@ -45,6 +45,15 @@ declare pengu_string_from_cstr_len with data as ref to frozen char, count as int
 weave from_bytes with data as ref to frozen byte, count as int into string:
     return calling pengu_string_from_cstr_len with (transmute data to ref to frozen char), count
 
+## Copia un string a un buffer propio.
+##
+## ## Memoria
+## Devuelve un string propio; libéralo con `banish`. `value` es prestado.
+antiquus copy with value as string into string:
+    r"""
+return pengu_string_copy(value);
+"""
+
 ## Copia un C string (`\0` terminado) a un string propio.
 ##
 ## ## Memoria

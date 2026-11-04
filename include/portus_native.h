@@ -21,6 +21,9 @@
 #define PORTUS_MAYBE_UNUSED
 #endif
 
+/* Adelanto: la usan los helpers de sesión antes de su definición. */
+static PORTUS_MAYBE_UNUSED int portus_native_random_hex(unsigned char *out, int bytes);
+
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -762,6 +765,30 @@ static PORTUS_MAYBE_UNUSED int portus_native_response_stream_end(void *res) {
     return 0;
 }
 
+
+/* Identificador de sesión: 32 hex en un buffer estático (no reentrante). */
+static PORTUS_MAYBE_UNUSED const char *portus_native_session_id(void) {
+    static char id[33];
+    if (portus_native_random_hex((unsigned char *)id, 16) != 0) {
+        memcpy(id, "00000000000000000000000000000000", 32);
+        id[32] = '\0';
+    }
+    return id;
+}
+
+/* Compara dos buffers en tiempo constante (longitudes incluidas). */
+static PORTUS_MAYBE_UNUSED int portus_native_constant_time_eq(const unsigned char *a, int a_len,
+                                                              const unsigned char *b, int b_len) {
+    unsigned char diff = 0;
+    int i;
+    if (a_len != b_len) {
+        return 0;
+    }
+    for (i = 0; i < a_len; i++) {
+        diff |= (unsigned char)(a[i] ^ b[i]);
+    }
+    return diff == 0;
+}
 
 /* ------------------------------------------------------------------ */
 /* WebSocket (RFC 6455, sin extensiones ni fragmentación)              */

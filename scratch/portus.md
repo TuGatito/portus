@@ -335,6 +335,54 @@ tipo subyacente).
 
 ---
 
+### F2 — cerrado (cuerpos, cookies, estáticos, compresión, negociación, SSE)
+
+- `text.pengu` (puente de strings desde C), `query.pengu`, `cookie.pengu`,
+  `mime.pengu`, `static_file.pengu` (ETag, Last-Modified, Range, 304/416),
+  `compress.pengu` (finisher gzip si el cliente lo acepta y el cuerpo ≥ 860 B),
+  `negotiation.pengu` (`Accept` con `q=` y `*/*`), streaming con
+  `Transfer-Encoding: chunked` y SSE (`sse_open`/`sse_send`/`sse_close`).
+- `Context`: `body_text`, `body_json`, `body_form`, `body_multipart`,
+  `queries`, `query_param`, `cookie`, `set_cookie`, `delete_cookie`,
+  `send_json`, `send_body_with_type`, `status_code`, `stream_*`.
+- Middlewares: request-id (`X-Request-Id`), cabeceras de seguridad, CORS
+  (preflight real), logger, gzip.
+- `include/portus_native.h`: `stream_*`, `response_body/set_body/header_value`,
+  `random_hex`, `request_id`, `now_ms`, `file_info`.
+- Gate: `tests/e2e_hello.sh` (gzip, negociación, SSE, estáticos, cookies, JSON)
+  → verde; 34 tests.
+- Commit: `97444c3 f2: estaticos con ETag/Range, gzip, negociacion y SSE`.
+
+### F3 — cerrado (WebSocket)
+
+- `include/portus_native.h`: handshake RFC 6455 (SHA-1 propio + base64),
+  frames con máscara obligatoria, ping/pong, close, `Sec-WebSocket-Accept`.
+- `websocket.pengu`: `SocketHandler`, `MessageFn`, `Conn` estable por conexión
+  (`opcode == 0` al abrir), `ws_upgrade`, `send_text`/`send_bytes`/`close`.
+- Gate: `tests/e2e_ws.sh` (handshake, eco, 300 B, ping/pong, cierre) → verde.
+- `examples/websocket-chat`: chat con broadcast; 10/10 clientes reciben.
+- Commits: `c15fd1a` y `2138b4b`.
+
+### F5 — cerrado (sesiones, auth, CSRF, rate limit, CSP, multipart)
+
+- `session.pengu`: sesiones firmadas (HMAC-SHA-256) con cookie `portus_sid`
+  y almacén en memoria (`static var` documentado); `sessions_configure/load/
+  start/get/set/save/destroy`.
+- `auth.pengu`: Basic, Bearer, JWT HS256 (`jwt_sign`/`jwt_verify`/`jwt_claims`/
+  `jwt_bearer`), comparación en tiempo constante.
+- `csrf.pengu`: double-submit (`X-CSRF-Token` + cookie `portus_csrf`),
+  `csrf_protect` deja pasar GET/HEAD/OPTIONS.
+- `rate_limit.pengu`: ventana fija por cliente (`X-Forwarded-For` o `local`),
+  `use_rate_limit` global y `use_rate_limit_at` por prefijo, 429 + `Retry-After`.
+- `middleware.pengu`: CSP configurable (`use_csp`).
+- `multipart.pengu`: `Part` (name/filename/content_type/data) y
+  `Context.body_multipart`.
+- Gate: `tests/e2e_security.sh` (login/me/logout con cookie jar, Basic, JWT,
+  rate limit por prefijo, multipart `curl -F`, CSRF con y sin token, CSP) →
+  `OK e2e security (puerto …)`.
+- `examples/auth-jwt` y `examples/session` con README y smoke test real.
+- Tests: 42 unitarios.
+
 ## 8. Estado del repositorio
 
 ```
@@ -359,15 +407,25 @@ portus/
 │       ├── static_file.pengu   # estáticos con ETag/Last-Modified/Range
 │       ├── compress.pengu      # gzip de respuesta (finisher)
 │       ├── negotiation.pengu   # Accept / q=
+│       ├── session.pengu       # sesiones firmadas en memoria
+│       ├── auth.pengu          # Basic, Bearer y JWT HS256
+│       ├── csrf.pengu          # double-submit
+│       ├── rate_limit.pengu    # ventana fija por cliente
+│       ├── multipart.pengu     # parseo de multipart/form-data
+│       ├── websocket.pengu     # handshake, frames y Conn
 │       └── application.pengu   # Application, dispatch, serve
 ├── include/
 │   ├── portus_native.h         # servidor poll(2) + llhttp, header-only
 │   └── llhttp/                 # llhttp 9.4.3 vendorizado (LICENSE, SOURCE)
 ├── tools/vendor_llhttp.sh
-├── tests/e2e_hello.sh          # gate de F0 (instalación + HTTP real)
+├── examples/                   # 10 ejemplos estilo Express
+├── tests/
+│   ├── e2e_hello.sh            # gate de F0/F2 (HTTP real, cookies, SSE…)
+│   ├── e2e_ws.sh               # gate de F3 (WebSocket)
+│   └── e2e_security.sh         # gate de F5 (sesiones, auth, CSRF…)
 └── scratch/                    # auditoría, diseño y planes
     ├── portus.md               # ESTE documento
-    ├── portus-*.md             # 11 documentos
+    ├── portus-*.md             # 12 documentos
     └── spikes/                 # evidencia de compilador (ignorada por git)
 ```
 

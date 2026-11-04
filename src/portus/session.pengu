@@ -1,0 +1,213 @@
+## portus.session — sesiones con cookie firmada y almacén en memoria.
+##
+## Una sesión es un `id` aleatorio de 32 hex en una cookie `HttpOnly` firmada
+## con HMAC-SHA-256. Los datos viven en memoria del proceso, con expiración;
+## al cerrar el proceso se pierden (para persistencia, ver
+## `portus-deferred.md`).
+##
+## ## Ejemplo
+## ```pengu
+## weave login with context as ref to portus.Context into result of void to portus.HttpError:
+##     var session as portus.session.Session is calling portus.session.start with context
+##     calling portus.session.set with sigil of session, "user", "ada"
+##     calling portus.session.save with context, sigil of session
+##     calling context.send_text with "dentro"
+##     return calling portus.ok_void
+## ```
+##
+## ## Memoria
+## `load` devuelve un `Session` prestado (no lo liberes); `start` crea uno que
+## debes `save` o dejar caducar. Las cadenas que devuelve `get` son copias
+## propias.
+import std.cipher
+import std.digest
+import std.lot
+import std.scrolls
+import std.ward
+import portus.context as context_module
+import portus.cookie as cookie_module
+import portus.native as native_module
+import portus.text as text
+
+## Nombre de la cookie de sesión.
+const COOKIE_NAME as string is "portus_sid"
+
+## Vida por defecto de una sesión (1 hora).
+const DEFAULT_TTL_MS as long is 3600000
+
+## Entrada del almacén: datos y caducidad.
+rune Store:
+    ## Valores, con clave `"<sid>|<campo>"`.
+    entries as map of string to string
+    ## Caducidad por `sid`.
+    expiry as map of string to long
+    ## Secreto de firma.
+    secret as string
+    ## Vida de cada sesión.
+    ttl_ms as long
+
+## Sesión de una petición.
+rune Session:
+    ## Identificador (32 hex).
+    id as string
+    ## `true` si aún no está en el almacén.
+    is_new as bool
+
+## Almacén del proceso. Es el sujeto de este módulo: por eso es `static var`.
+weave store into ref to Store:
+    static var held as Store is with entries is (map of string to string), expiry is (map of string to long), secret is "portus-dev-secret", ttl_ms is DEFAULT_TTL_MS
+    return sigil of held
+
+## Fija el secreto de firma y la vida de las sesiones.
+weave configure with secret as string, ttl_ms as long into void:
+    var held as ref to Store is calling store
+    set held->secret is calling text.copy with secret
+    set held->ttl_ms is ttl_ms
+    return
+
+## Firma un `id` con el secreto actual (hex).
+weave sign with id as string into string:
+    var held as ref to Store is calling store
+    return calling digest.hmac_sha256_hex with held->secret, id
+
+## Comprueba una firma en tiempo constante.
+weave verify with id as string, signature as string into bool:
+    var held as ref to Store is calling store
+    var expected as string is calling digest.hmac_sha256_hex with held->secret, id
+    defer banish expected
+    if (calling scrolls.len with expected) != (calling scrolls.len with signature):
+        return false
+    var same as int is calling native_module.portus_native_constant_time_eq with (bytes of expected), (calling scrolls.len with expected), (bytes of signature), (calling scrolls.len with signature)
+    return same == 1
+
+## Genera un identificador nuevo (32 hex).
+weave new_id into string:
+    return calling text.from_cstr with (calling native_module.portus_native_session_id)
+
+## Extrae el `sid` de la cookie firmada; `maybe none` si no hay o no cuadra.
+weave sid_of with context as ref to context_module.Context into maybe string:
+    let raw as maybe string is calling context.cookie with COOKIE_NAME
+    if not raw.is_present:
+        return maybe none
+    let value as string is raw.value
+    var dot as int is -1
+    var i as int is 0
+    while i < (calling scrolls.len with value):
+        if (value at i) == ".":
+            set dot is i
+        set i is i + 1
+    if dot <= 0:
+        return maybe none
+    let id as string is calling scrolls.substring with value, 0, dot
+    let signature as string is calling scrolls.substring with value, dot + 1, (calling scrolls.len with value)
+    defer banish id
+    defer banish signature
+    if not (calling verify with id, signature):
+        return maybe none
+    return some (calling text.copy with id)
+
+## Carga la sesión de la petición, si la cookie es válida y no ha caducado.
+weave load with context as ref to context_module.Context into maybe Session:
+    let found as maybe string is calling sid_of with context
+    if not found.is_present:
+        return maybe none
+    var id as string is found.value
+    var held as ref to Store is calling store
+    if not (calling held->expiry.contains with id):
+        banish id
+        return maybe none
+    var deadline as long is calling held->expiry.get with id
+    if deadline <= calling native_module.portus_native_now_ms:
+        calling drop with id
+        banish id
+        return maybe none
+    var created as Session is with id is id, is_new is false
+    return some (created)
+
+## Empieza una sesión nueva (todavía no está guardada).
+weave start with context as ref to context_module.Context into Session:
+    let id as string is calling new_id
+    return with id is id, is_new is true
+
+## Valor de la sesión, o `none`.
+weave get with session as ref to Session, name as string into maybe string:
+    var held as ref to Store is calling store
+    var key as string is "{session->id}|{name}"
+    defer banish key
+    if not (calling held->entries.contains with key):
+        return maybe none
+    return some (calling text.copy with (calling held->entries.get with key))
+
+## Fija un valor.
+weave set with session as ref to Session, name as string, value as string into void:
+    var held as ref to Store is calling store
+    var key as string is "{session->id}|{name}"
+    var owned as string is calling text.copy with value
+    calling held->entries.put with key, owned
+    return
+
+## Guarda la sesión y manda la cookie firmada.
+weave save with context as ref to context_module.Context, session as ref to Session into void:
+    var held as ref to Store is calling store
+    var deadline as long is calling native_module.portus_native_now_ms + held->ttl_ms
+    calling held->expiry.put with (calling text.copy with session->id), deadline
+    set session->is_new is false
+    var signature as string is calling sign with session->id
+    var payload as string is "{session->id}.{signature}"
+    defer banish signature
+    defer banish payload
+    var options as cookie_module.CookieOptions is with max_age is 0, path is "/", http_only is true, secure is false, same_site is "Lax"
+    set options.max_age is (held->ttl_ms / 1000) to int
+    var header as string is calling cookie_module.serialize_cookie with COOKIE_NAME, payload, options
+    defer banish header
+    calling context.set_header with "Set-Cookie", header
+    return
+
+## Borra la sesión del almacén y la cookie.
+weave destroy with context as ref to context_module.Context, session as ref to Session into void:
+    calling drop with session->id
+    var header as string is calling cookie_module.clear_cookie with COOKIE_NAME, "/"
+    defer banish header
+    calling context.set_header with "Set-Cookie", header
+    return
+
+## Borra todos los valores de un `sid`.
+weave drop with id as string into void:
+    var held as ref to Store is calling store
+    var table as map of string to string is held->entries
+    var all as list of string is calling table.keys
+    defer banish all
+    var prefix as string is "{id}|"
+    defer banish prefix
+    var i as int is 0
+    while i < all.len:
+        let key as string is all at i
+        if calling key.starts_with with prefix:
+            if calling table.contains with key:
+                let removed as bool is calling table.remove with key
+        set i is i + 1
+    set held->entries is table
+    var deadlines as map of string to long is held->expiry
+    if calling deadlines.contains with id:
+        let gone as bool is calling deadlines.remove with id
+    set held->expiry is deadlines
+    return
+
+test "firma y verificación":
+    var id as string is "abc123"
+    let signature as string is calling sign with id
+    defer banish signature
+    calling ward.assert_true with (calling verify with id, signature)
+    var tampered as string is "{signature}0"
+    defer banish tampered
+    calling ward.assert_false with (calling verify with id, tampered)
+
+test "ida de sesión con datos":
+    var session as Session is with id is "s1", is_new is true
+    calling set with sigil of session, "user", "ada"
+    let found as maybe string is calling get with sigil of session, "user"
+    calling ward.assert_true with found.is_present
+    calling ward.assert_eq_string with found.value, "ada"
+    calling drop with "s1"
+    let gone as maybe string is calling get with sigil of session, "user"
+    calling ward.assert_false with gone.is_present

@@ -1,0 +1,46 @@
+## Ejemplo: sesiones firmadas en memoria.
+##
+## `/login?user=ada` abre sesión; `/me` la lee; `/logout` la cierra.
+
+import portus
+
+const PORT as int is 3000
+
+weave login with context as ref to portus.Context into result of void to portus.HttpError:
+    let user as maybe string is calling context.query_param with "user"
+    if name as string is user:
+        var current as portus.Session is calling portus.sessions_start with context
+        calling portus.sessions_set with sigil of current, "user", name
+        calling portus.sessions_save with context, sigil of current
+        calling context.send_text with "dentro"
+        return calling portus.ok_void
+    calling context.set_status with 400
+    calling context.send_text with "falta ?user="
+    return calling portus.ok_void
+
+weave me with context as ref to portus.Context into result of void to portus.HttpError:
+    let found as maybe portus.Session is calling portus.sessions_load with context
+    if current as portus.Session is found:
+        var owned as portus.Session is current
+        let who as maybe string is calling portus.sessions_get with sigil of owned, "user"
+        if name as string is who:
+            calling context.send_text with "hola {name}"
+            return calling portus.ok_void
+    return calling portus.err_void with (calling portus.error.unauthorized)
+
+weave logout with context as ref to portus.Context into result of void to portus.HttpError:
+    let found as maybe portus.Session is calling portus.sessions_load with context
+    if current as portus.Session is found:
+        var owned as portus.Session is current
+        calling portus.sessions_destroy with context, sigil of owned
+    calling context.send_text with "fuera"
+    return calling portus.ok_void
+
+weave main into int:
+    calling portus.sessions_configure with "clave-de-ejemplo", 3600000
+    var app as portus.Application is calling portus.new_application
+    let r1 as result of void to portus.PatternError is calling portus.get with sigil of app, "/login", login
+    let r2 as result of void to portus.PatternError is calling portus.get with sigil of app, "/me", me
+    let r3 as result of void to portus.PatternError is calling portus.get with sigil of app, "/logout", logout
+    let served as result of int to string is calling portus.serve with sigil of app, PORT
+    return served or else 1

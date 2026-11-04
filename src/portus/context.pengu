@@ -16,6 +16,7 @@
 import std.json
 import std.scrolls
 import portus.cookie as cookie_module
+import portus.multipart as multipart_module
 import portus.query as query_module
 import portus.route as route
 import portus.transport as transport
@@ -219,6 +220,22 @@ enchanting Context:
     weave body_form into query_module.Query:
         var request as ref to transport.Request is self->request
         return calling query_module.parse_query with (calling request.body_text)
+
+    ## Cuerpo `multipart/form-data` como partes.
+    ##
+    ## ## Memoria
+    ## Devuelve partes propias; libéralas con `multipart.free_parts`.
+    weave body_multipart into maybe list of multipart_module.Part:
+        let content_type as maybe string is calling self.header with "content-type"
+        if not content_type.is_present:
+            return maybe none
+        var kind as string is content_type.value
+        defer banish kind
+        if not calling kind.starts_with with "multipart/form-data":
+            return maybe none
+        var raw as string is calling self.body_text
+        defer banish raw
+        return calling multipart_module.parse with kind, raw
 
     ## Valor de una cookie de la petición.
     ##

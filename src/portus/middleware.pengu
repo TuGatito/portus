@@ -112,3 +112,33 @@ weave _log_after with data as ref to void, context as ref to context_module.Cont
     calling spark.println with line
     banish line
     return calling handler_module.ok_void
+
+## Configuración de CSP.
+rune CspConfig:
+    ## Política a aplicar.
+    policy as string
+
+## Convierte la configuración en el `data` opaco del middleware.
+antiquus _raw_csp with config as ref to CspConfig into ref to void:
+    r"""
+return (void *)config;
+"""
+
+## Añade `Content-Security-Policy` si la respuesta no trae una.
+weave _csp with data as ref to void, context as ref to context_module.Context into result of void to error_module.HttpError:
+    if not (calling context.is_sent):
+        return calling handler_module.ok_void
+    let existing as maybe string is calling context.header with "content-security-policy"
+    if existing.is_present:
+        return calling handler_module.ok_void
+    var config as ref to CspConfig is transmute data to ref to CspConfig
+    calling context.set_header with "Content-Security-Policy", config->policy
+    return calling handler_module.ok_void
+
+## Aplica una política CSP a las respuestas de la aplicación.
+weave use_csp with app as ref to application_module.Application, policy as string into void:
+    var arena as ref to arena_module.Arena is calling application_module.arena_of with app
+    var config as ref to CspConfig is calling arena_module.arena_alloc_one of CspConfig with arena
+    set config->policy is calling text.copy with policy
+    calling application_module.after with app, (calling handler_module.middleware_with with _csp, (calling _raw_csp with config))
+    return

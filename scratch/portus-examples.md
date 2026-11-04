@@ -63,9 +63,9 @@ Leyenda: ✅ factible · 🟡 adaptado (no idéntico) · ⛔ no aplica en v1.
 | 14 | `resource` | ✅ | F2 | CRUD, `redirect`, `set_status` |
 | 15 | `web-service` | ✅ | F2 | JSON, auth por cabecera |
 | 16 | `vhost` | ✅ | F2 | `Request.host`, prefijos |
-| 17 | `session` | ✅ | F5 | `use_session`, `Session` |
+| 17 | `session` (hecho: `session`) | ✅ | F5 | `use_session`, `Session` |
 | 18 | `cookie-sessions` | ✅ | F5 | cookie firmada |
-| 19 | `auth` | ✅ | F5 | `use_basic_auth` |
+| 19 | `auth` (hecho: `auth-jwt`) | ✅ | F5 | `use_basic_auth` |
 | 20 | `online` | 🟡 | F5 | sesiones + SSE (sin Redis) |
 | 21 | `file-upload` (propio) | ✅ | F5 | multipart |
 | 22 | `auth-jwt` (propio) | ✅ | F5 | `use_bearer`, JWT |

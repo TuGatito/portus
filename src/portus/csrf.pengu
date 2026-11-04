@@ -1,0 +1,72 @@
+## portus.csrf — protección CSRF por doble envío.
+##
+## El servidor pone una cookie `portus_csrf` (legible por JavaScript) y espera
+## que el cliente la repita en la cabecera `X-CSRF-Token` en cada petición que
+## cambia estado. `guard` rechaza con 403 las que no coinciden.
+##
+## ## Memoria
+## `token` devuelve un string propio; libéralo con `banish`. `guard` no
+## devuelve datos.
+import std.scrolls
+import std.ward
+import portus.context as context_module
+import portus.error as error_module
+import portus.handler as handler_module
+import portus.native as native_module
+import portus.text as text
+
+## Cabecera esperada.
+const HEADER_NAME as string is "X-CSRF-Token"
+
+## Cookie donde vive el token.
+const COOKIE_NAME as string is "portus_csrf"
+
+## Compara en tiempo constante.
+weave _same with a as string, b as string into bool:
+    if (calling scrolls.len with a) != (calling scrolls.len with b):
+        return false
+    var code as int is calling native_module.portus_native_constant_time_eq with (bytes of a), (calling scrolls.len with a), (bytes of b), (calling scrolls.len with b)
+    return code == 1
+
+## Token de la petición: reutiliza la cookie o crea una nueva.
+##
+## ## Memoria
+## Devuelve un string propio; libéralo con `banish`.
+weave token with context as ref to context_module.Context into string:
+    let existing as maybe string is calling context.cookie with COOKIE_NAME
+    if existing.is_present:
+        return calling text.copy with existing.value
+    var fresh as string is calling text.from_cstr with (calling native_module.portus_native_request_id)
+    var owned as string is calling text.copy with fresh
+    banish fresh
+    calling context.set_cookie with COOKIE_NAME, owned
+    return owned
+
+## `true` si la cabecera y la cookie coinciden.
+weave check with context as ref to context_module.Context into bool:
+    let cookie as maybe string is calling context.cookie with COOKIE_NAME
+    if not cookie.is_present:
+        return false
+    let header as maybe string is calling context.header with "x-csrf-token"
+    if not header.is_present:
+        return false
+    return calling _same with cookie.value, header.value
+
+## Rechaza (403) las peticiones que cambian estado sin token válido.
+weave guard with context as ref to context_module.Context into result of void to error_module.HttpError:
+    var method as string is calling context.method
+    defer banish method
+    if method == "GET" or method == "HEAD" or method == "OPTIONS":
+        return calling handler_module.ok_void
+    if calling check with context:
+        return calling handler_module.ok_void
+    calling context.set_status with 403
+    var body as string is "csrf token invalido"
+    defer banish body
+    calling context.send_text with body
+    calling context.mark_sent
+    return calling handler_module.ok_void
+
+test "compara tokens":
+    calling ward.assert_true with (calling _same with "abc", "abc")
+    calling ward.assert_false with (calling _same with "abc", "abd")

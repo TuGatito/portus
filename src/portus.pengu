@@ -225,3 +225,124 @@ weave ws_text with payload as ref to frozen byte, length as int into string:
 ## Acepta la conexión WebSocket de esta petición.
 weave ws_upgrade with context as ref to Context, handler as WebSocketHandler into bool:
     return calling websocket_module.upgrade with context, handler
+
+# --- Sesiones -------------------------------------------------------------
+
+import portus.session as session_module
+
+## Sesión de una petición (cookie firmada).
+alias Session as session_module.Session
+
+## Fija el secreto de firma y la vida de las sesiones.
+weave sessions_configure with secret as string, ttl_ms as long into void:
+    calling session_module.configure with secret, ttl_ms
+    return
+
+## Carga la sesión de la petición, si la hay y es válida.
+weave sessions_load with context as ref to Context into maybe session_module.Session:
+    return calling session_module.load with context
+
+## Empieza una sesión nueva.
+weave sessions_start with context as ref to Context into session_module.Session:
+    return calling session_module.start with context
+
+## Lee un valor de la sesión.
+weave sessions_get with session as ref to session_module.Session, name as string into maybe string:
+    return calling session_module.get with session, name
+
+## Escribe un valor en la sesión.
+weave sessions_set with session as ref to session_module.Session, name as string, value as string into void:
+    calling session_module.set with session, name, value
+    return
+
+## Guarda la sesión y manda la cookie.
+weave sessions_save with context as ref to Context, session as ref to session_module.Session into void:
+    calling session_module.save with context, session
+    return
+
+## Borra la sesión y su cookie.
+weave sessions_destroy with context as ref to Context, session as ref to session_module.Session into void:
+    calling session_module.destroy with context, session
+    return
+
+# --- Seguridad ------------------------------------------------------------
+
+import portus.auth as auth_module
+import portus.csrf as csrf_module
+import portus.rate_limit as rate_limit_module
+
+## Autentica Basic; si falla deja `WWW-Authenticate: Basic`.
+weave basic_auth with context as ref to Context, user as string, password as string into maybe string:
+    return calling auth_module.basic with context, user, password
+
+## Token Bearer de la petición.
+weave bearer_auth with context as ref to Context into maybe string:
+    return calling auth_module.bearer with context
+
+## Comprueba un Bearer fijo.
+weave bearer_required with context as ref to Context, expected as string into bool:
+    return calling auth_module.bearer_is with context, expected
+
+## Firma un JWT HS256.
+weave jwt_sign with secret as string, claims as string into string:
+    return calling auth_module.sign_hs256 with secret, claims
+
+## Verifica la firma de un JWT HS256.
+weave jwt_verify with secret as string, token as string into bool:
+    return calling auth_module.verify_hs256 with secret, token
+
+## Claims de un JWT HS256 válido.
+weave jwt_claims with secret as string, token as string into maybe string:
+    return calling auth_module.claims with secret, token
+
+## Claims del Bearer JWT de la petición, si la firma cuadra.
+weave jwt_bearer with context as ref to Context, secret as string into maybe string:
+    return calling auth_module.bearer_jwt with context, secret
+
+## Token CSRF de la petición (crea cookie si falta).
+weave issue_csrf_token with context as ref to Context into string:
+    return calling csrf_module.token with context
+
+## `true` si la cabecera CSRF coincide con la cookie.
+weave csrf_ok with context as ref to Context into bool:
+    return calling csrf_module.check with context
+
+## Rechaza con 403 las peticiones que cambian estado sin CSRF válido.
+weave csrf_protect with context as ref to Context into result of void to HttpError:
+    return calling csrf_module.guard with context
+
+## Limita las peticiones por cliente (ventana fija).
+weave use_rate_limit with app as ref to Application, max_requests as int, window_ms as long into void:
+    calling rate_limit_module.use with app, max_requests, window_ms
+    return
+
+## Limita las peticiones bajo `prefix`.
+weave use_rate_limit_at with app as ref to Application, prefix as string, max_requests as int, window_ms as long into void:
+    calling rate_limit_module.use_at with app, prefix, max_requests, window_ms
+    return
+
+## Añade la cabecera `Content-Security-Policy`.
+weave use_csp with app as ref to Application, policy as string into void:
+    calling middleware_module.use_csp with app, policy
+    return
+
+# --- Multipart ------------------------------------------------------------
+
+import portus.multipart as multipart_module
+
+## Parte de un formulario `multipart/form-data`.
+alias MultipartPart as multipart_module.Part
+
+## Primera parte con ese nombre.
+weave multipart_part with parts as list of MultipartPart, name as string into maybe MultipartPart:
+    return calling multipart_module.part_named with parts, name
+
+## Libera una parte.
+weave free_multipart_part with part as MultipartPart into void:
+    calling multipart_module.free_part with part
+    return
+
+## Libera una lista de partes.
+weave free_multipart with parts as list of MultipartPart into void:
+    calling multipart_module.free_parts with parts
+    return

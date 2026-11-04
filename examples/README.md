@@ -14,7 +14,7 @@ psc run src/main.pengu          # http://127.0.0.1:3000
 o todos de golpe (solo compila; no los arranca):
 
 ```sh
-./examples/run.sh               # compila los 5 ejemplos
+./examples/run.sh               # compila todos los ejemplos
 ```
 
 ## Ejemplos
@@ -26,15 +26,18 @@ o todos de golpe (solo compila; no los arranca):
 | [`multi-router`](multi-router/) | grupos de rutas (`new_group`) | `multi-router` |
 | [`route-middleware`](route-middleware/) | `Middleware` con `use` | `route-middleware` |
 | [`error`](error/) | `HttpError`, `on_error`, `on_not_found` | `error` |
+| [`cookies-and-json`](cookies-and-json/) | cookies, JSON, request id, CORS | `cookies` |
+| [`websocket-chat`](websocket-chat/) | WebSocket con broadcast | — (propio) |
+| [`auth-jwt`](auth-jwt/) | Basic y JWT HS256 | `auth` |
+| [`session`](session/) | sesiones firmadas en memoria | `session` |
 
 ## Ejemplos de Express que no están
 
 - `ejs`, `markdown`, `mvc`, `view-constructor`, `view-locals`: necesitan un
   motor de plantillas que PenguScript todavía no tiene.
 - `online`: necesita Redis.
-- `auth`, `cookies`, `session`, `static-files`, `downloads`, `vhost`,
-  `content-negotiation`, `search`, `resource`, `web-service`, `cookie-sessions`:
-  llegan con F2/F3 (cookies, sesiones, estáticos, negociación de contenido).
-- `file-upload`: multipart, F2.
-- `auth-jwt`, `websocket-chat`, `sse-dashboard`, `rest-api`: ejemplos propios
-  planificados en [`../scratch/portus-examples.md`](../scratch/portus-examples.md).
+- `static-files`, `downloads`, `vhost`, `content-negotiation`, `search`,
+  `resource`, `web-service`, `cookie-sessions`: pendientes (F4/F6); la API ya
+  existe, faltan las carpetas.
+- `sse-dashboard`, `rest-api`: ejemplos propios planificados en
+  [`../scratch/portus-examples.md`](../scratch/portus-examples.md).

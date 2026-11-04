@@ -950,3 +950,84 @@ C; el cierre con código 1000 lo inicia el C o el cliente.
 El callback recibe `opcode` 0 al abrir (registrar la conexión), 1 texto, 2
 binario y 8 cierre. `Conn` es estable durante toda la conexión, así que se puede
 guardar en una lista de conexiones para broadcast; se libera tras el `opcode` 8.
+
+---
+
+## F5 — sesiones, auth, CSRF, rate limit, CSP y multipart (implementado)
+
+### Sesiones (`src/portus/session.pengu`)
+
+```pengu
+weave sessions_configure with secret as string, ttl_ms as long into void
+weave sessions_load with context as ref to Context into maybe Session
+weave sessions_start with context as ref to Context into Session
+weave sessions_get with session as ref to Session, name as string into maybe string
+weave sessions_set with session as ref to Session, name as string, value as string into void
+weave sessions_save with context as ref to Context, session as ref to Session into void
+weave sessions_destroy with context as ref to Context, session as ref to Session into void
+```
+
+`Session` no es propiedad del llamador: sus campos son `id` e `is_new`, y los
+datos viven en el almacén. La cookie es `portus_sid` y va firmada con
+HMAC-SHA-256; el almacén es un `static var` (documentado: el estado ES el sujeto
+del módulo) y se pierde al reiniciar. TTL por defecto: 1 h.
+
+### Autenticación (`src/portus/auth.pengu`)
+
+```pengu
+weave basic_auth with context as ref to Context, user as string, password as string into maybe string
+weave bearer_auth with context as ref to Context into maybe string
+weave bearer_required with context as ref to Context, expected as string into bool
+weave jwt_sign with secret as string, claims as string into string
+weave jwt_verify with secret as string, token as string into bool
+weave jwt_claims with secret as string, token as string into maybe string
+weave jwt_bearer with context as ref to Context, secret as string into maybe string
+```
+
+`basic_auth` deja `WWW-Authenticate` si falla. `jwt_sign` produce HS256 con el
+payload tal cual (JSON del llamador). `jwt_bearer` devuelve el payload si la
+firma cuadra; `none` si no.
+
+### CSRF (`src/portus/csrf.pengu`)
+
+```pengu
+weave issue_csrf_token with context as ref to Context into string
+weave csrf_ok with context as ref to Context into bool
+weave csrf_protect with context as ref to Context into result of void to HttpError
+```
+
+Double-submit: cookie `portus_csrf` y cabecera `X-CSRF-Token`. `csrf_protect`
+deja pasar GET/HEAD/OPTIONS y responde 403 en el resto si no cuadra.
+
+### Rate limit (`src/portus/rate_limit.pengu`)
+
+```pengu
+weave use_rate_limit with app as ref to Application, max_requests as int, window_ms as long into void
+weave use_rate_limit_at with app as ref to Application, prefix as string, max_requests as int, window_ms as long into void
+```
+
+Ventana fija por cliente (`X-Forwarded-For` o `local`); 429 con `Retry-After`.
+`use_rate_limit_at` limita solo un prefijo (recomendado para no bloquear
+estáticos ni el preflight CORS).
+
+### CSP (`src/portus/middleware.pengu`)
+
+```pengu
+weave use_csp with app as ref to Application, policy as string into void
+```
+
+Finisher: añade `Content-Security-Policy` si la respuesta se envió y no trae ya
+una.
+
+### Multipart (`src/portus/multipart.pengu`)
+
+```pengu
+alias MultipartPart as multipart_module.Part
+weave multipart_part with parts as list of MultipartPart, name as string into maybe MultipartPart
+weave free_multipart_part with part as MultipartPart into void
+weave free_multipart with parts as list of MultipartPart into void
+```
+
+`Context.body_multipart` devuelve `maybe list of Part` solo si el
+`Content-Type` es `multipart/form-data`; cada `Part` tiene `name`, `filename`,
+`content_type` y `data` (binario). Hay que liberar con `free_multipart`.

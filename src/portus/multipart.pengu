@@ -1,0 +1,163 @@
+## portus.multipart — parser de `multipart/form-data`.
+##
+## Pensado para formularios (campos de texto y ficheros pequeños). No valida
+## cuotas por parte ni decodifica `Content-Transfer-Encoding`; el límite de
+## tamaño lo pone `Config.max_body_bytes` antes de llegar aquí.
+##
+## ## Memoria
+## Las partes que devuelve `parse` son propias: `free_parts` libera la lista,
+## cada nombre, cada nombre de fichero y cada cuerpo.
+import std.scrolls
+import std.ward
+import portus.text as text
+
+## Una parte del formulario.
+rune Part:
+    ## Nombre del campo (`name="..."`).
+    name as string
+    ## Nombre de fichero (`filename="..."`), vacío si no es un fichero.
+    filename as string
+    ## `Content-Type` de la parte, vacío si no trae.
+    content_type as string
+    ## Contenido.
+    data as string
+
+## Libera una parte.
+weave free_part with part as Part into void:
+    banish part.name
+    banish part.filename
+    banish part.content_type
+    banish part.data
+    return
+
+## Libera una lista de partes.
+weave free_parts with parts as list of Part into void:
+    var i as int is 0
+    while i < parts.len:
+        var part as Part is (parts at i)
+        calling free_part with part
+        set i is i + 1
+    banish parts
+
+## Extrae el `boundary` de un `Content-Type`.
+weave boundary_of with content_type as string into string:
+    var marker as string is "boundary="
+    var at as int is calling scrolls.index_of with content_type, marker
+    if at < 0:
+        return calling text.copy with ""
+    var start as int is at + (calling scrolls.len with marker)
+    var total as int is calling scrolls.len with content_type
+    var end as int is total
+    var i as int is start
+    while i < total:
+        if (content_type at i) == ";":
+            set end is i
+            set i is total
+        else:
+            set i is i + 1
+    var raw as string is calling scrolls.substring with content_type, start, end
+    var clean as string is calling scrolls.trim with raw
+    banish raw
+    if (calling scrolls.len with clean) >= 2 and (clean at 0) == "\"":
+        var inner as string is calling scrolls.substring with clean, 1, (calling scrolls.len with clean) - 1
+        banish clean
+        return inner
+    return clean
+
+## Valor de un parámetro `clave="valor"` dentro de una cabecera de parte.
+weave _param with header as string, key as string into string:
+    var marker as string is "{key}=\""
+    var at as int is calling scrolls.index_of with header, marker
+    if at < 0:
+        return calling text.copy with ""
+    var start as int is at + (calling scrolls.len with marker)
+    var rest as string is calling scrolls.substring with header, start, calling scrolls.len with header
+    var quote as int is calling scrolls.index_of with rest, "\""
+    banish rest
+    if quote < 0:
+        return calling text.copy with ""
+    return calling scrolls.substring with header, start, start + quote
+
+## Interpreta las cabeceras de una parte.
+weave _fill_header with part as ref to Part, header as string into void:
+    var lines as list of string is calling scrolls.split_lines with header
+    var i as int is 0
+    while i < lines.len:
+        let line as string is lines at i
+        var lower as string is calling scrolls.to_lower with line
+        if calling lower.starts_with with "content-disposition:":
+            var name as string is calling _param with line, "name"
+            if (calling scrolls.len with name) > 0:
+                banish part->name
+                set part->name is name
+            var filename as string is calling _param with line, "filename"
+            if (calling scrolls.len with filename) > 0:
+                banish part->filename
+                set part->filename is filename
+        if calling lower.starts_with with "content-type:":
+            var colon as int is calling scrolls.index_of with line, ":"
+            if colon >= 0:
+                var value as string is calling scrolls.substring with line, colon + 1, (calling scrolls.len with line)
+                var clean as string is calling scrolls.trim with value
+                banish value
+                banish part->content_type
+                set part->content_type is clean
+        banish lower
+        set i is i + 1
+    calling text.free_borrowed with lines
+    return
+
+## Parsea un cuerpo `multipart/form-data`; `none` si no hay `boundary`.
+##
+## ## Memoria
+## Devuelve partes propias; libéralas con `free_parts`.
+weave parse with content_type as string, body as string into maybe list of Part:
+    var boundary as string is calling boundary_of with content_type
+    defer banish boundary
+    if (calling scrolls.len with boundary) == 0:
+        return maybe none
+    var delimiter as string is "--{boundary}"
+    defer banish delimiter
+    var chunks as list of string is calling scrolls.split with body, delimiter
+    defer calling text.free_borrowed with chunks
+    var parts as list of Part is []
+    var i as int is 1
+    while i < chunks.len:
+        let chunk as string is chunks at i
+        if calling chunk.starts_with with "--":
+            set i is chunks.len
+        else:
+            var content as string is chunk
+            if calling content.starts_with with "\r\n":
+                set content is calling scrolls.substring with content, 2, (calling scrolls.len with content)
+            var split as int is calling scrolls.index_of with content, "\r\n\r\n"
+            if split >= 0:
+                var header as string is calling scrolls.substring with content, 0, split
+                var data as string is calling scrolls.substring with content, split + 4, (calling scrolls.len with content)
+                if calling data.ends_with with "\r\n":
+                    var trimmed as string is calling scrolls.substring with data, 0, (calling scrolls.len with data) - 2
+                    banish data
+                    set data is trimmed
+                var part as Part is with name is (calling text.copy with ""), filename is (calling text.copy with ""), content_type is (calling text.copy with ""), data is data
+                calling _fill_header with sigil of part, header
+                banish header
+                calling parts.push with part
+            set i is i + 1
+    if parts.len == 0:
+        return maybe none
+    return some (parts)
+
+## Primera parte con ese nombre.
+weave part_named with parts as list of Part, name as string into maybe Part:
+    var i as int is 0
+    while i < parts.len:
+        let part as Part is (parts at i)
+        if (calling scrolls.compare with part.name, name) == 0:
+            var found as Part is with name is (calling text.copy with part.name), filename is (calling text.copy with part.filename), content_type is (calling text.copy with part.content_type), data is (calling text.copy with part.data)
+            return some (found)
+        set i is i + 1
+    return maybe none
+
+test "parametros de cabecera":
+    calling ward.assert_eq_string with (calling _param with "form-data; name=\"titulo\"", "name"), "titulo"
+    calling ward.assert_eq_string with (calling _param with "form-data; name=\"f\"; filename=\"a.txt\"", "filename"), "a.txt"

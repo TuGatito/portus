@@ -53,6 +53,10 @@ declare portus_native_response_stream_write with response as ref to portus_respo
 declare portus_native_response_stream_end with response as ref to portus_response_t into int
 declare portus_native_response_status with response as ref to portus_response_t into int
 
+declare portus_native_session_id into ref to frozen char
+
+declare portus_native_constant_time_eq with a as ref to frozen byte, a_length as int, b as ref to frozen byte, b_length as int into int
+
 # --- WebSocket ------------------------------------------------------------
 
 declare portus_native_ws_upgrade with response as ref to portus_response_t, callback as weave with userdata as ref to void, response as ref to void, opcode as int, payload as ref to frozen byte, length as int into void , userdata as ref to void into int

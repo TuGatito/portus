@@ -1,0 +1,233 @@
+## portus.auth — Basic, Bearer y JWT HS256.
+##
+## Ninguna función escribe la respuesta: devuelven `none`/`false` y dejan
+## `WWW-Authenticate` puesto, para que el handler decida el códigos y el cuerpo.
+##
+## ## Ejemplo
+## ```pengu
+## weave area with context as ref to portus.Context into result of void to portus.HttpError:
+##     let user as maybe string is calling portus.auth.basic with context, "ada", "secreto"
+##     if not user.is_present:
+##         calling context.send_status with 401, "no autorizado"
+##         return calling portus.ok_void
+##     calling context.send_text with "hola {user.value}"
+##     return calling portus.ok_void
+## ```
+##
+## ## Memoria
+## Las credenciales y los tokens que devuelven estas funciones son copias
+## propias; libéralas con `banish`.
+import std.cipher
+import std.digest
+import std.scrolls
+import std.ward
+import portus.context as context_module
+import portus.native as native_module
+import portus.text as text
+
+## Usuario y contraseña de Basic.
+rune Credentials:
+    ## Usuario.
+    user as string
+    ## Contraseña.
+    password as string
+
+## Cabecera `WWW-Authenticate` de Basic.
+const BASIC_REALM as string is "Basic realm=\"portus\""
+
+## Cabecera `WWW-Authenticate` de Bearer.
+const BEARER_REALM as string is "Bearer realm=\"portus\""
+
+## Compara dos strings en tiempo constante.
+weave same_secret with a as string, b as string into bool:
+    if (calling scrolls.len with a) != (calling scrolls.len with b):
+        return false
+    var code as int is calling native_module.portus_native_constant_time_eq with (bytes of a), (calling scrolls.len with a), (bytes of b), (calling scrolls.len with b)
+    return code == 1
+
+## Credenciales Basic de la petición, si la cabecera es válida.
+##
+## ## Memoria
+## Devuelve credenciales propias; libéralas con `banish` (o deja que el
+## llamador lo haga).
+weave parse_basic with context as ref to context_module.Context into maybe Credentials:
+    let header as maybe string is calling context.header with "authorization"
+    if not header.is_present:
+        return maybe none
+    var raw as string is header.value
+    if (calling scrolls.len with raw) < 7:
+        return maybe none
+    var scheme as string is calling scrolls.substring with raw, 0, 6
+    defer banish scheme
+    if not (calling text.equals_ignore_case with scheme, "Basic "):
+        return maybe none
+    var encoded as string is calling scrolls.substring with raw, 6, (calling scrolls.len with raw)
+    defer banish encoded
+    let decoded as maybe string is calling cipher.decode_base64 with encoded
+    if not decoded.is_present:
+        return maybe none
+    var pair as string is decoded.value
+    var colon as int is -1
+    var i as int is 0
+    while i < (calling scrolls.len with pair):
+        if (pair at i) == ":":
+            set colon is i
+            set i is calling scrolls.len with pair
+        else:
+            set i is i + 1
+    if colon < 0:
+        banish pair
+        return maybe none
+    var user as string is calling scrolls.substring with pair, 0, colon
+    var password as string is calling scrolls.substring with pair, colon + 1, (calling scrolls.len with pair)
+    banish pair
+    var creds as Credentials is with user is user, password is password
+    return some (creds)
+
+## Autentica Basic contra `user`/`password`; si falla deja `WWW-Authenticate`.
+##
+## ## Memoria
+## El string devuelto es propio; libéralo con `banish`.
+weave basic with context as ref to context_module.Context, user as string, password as string into maybe string:
+    let found as maybe Credentials is calling parse_basic with context
+    if not found.is_present:
+        calling context.set_header with "WWW-Authenticate", BASIC_REALM
+        return maybe none
+    var given as Credentials is found.value
+    defer banish given.user
+    defer banish given.password
+    if not (calling same_secret with given.user, user) or not (calling same_secret with given.password, password):
+        calling context.set_header with "WWW-Authenticate", BASIC_REALM
+        return maybe none
+    return some (calling text.copy with given.user)
+
+## Token Bearer de la petición, si lo hay.
+##
+## ## Memoria
+## Devuelve un string propio; libéralo con `banish`.
+weave bearer with context as ref to context_module.Context into maybe string:
+    let header as maybe string is calling context.header with "authorization"
+    if not header.is_present:
+        return maybe none
+    var raw as string is header.value
+    if (calling scrolls.len with raw) < 8:
+        return maybe none
+    var scheme as string is calling scrolls.substring with raw, 0, 7
+    defer banish scheme
+    if not (calling text.equals_ignore_case with scheme, "Bearer "):
+        return maybe none
+    return some (calling scrolls.substring with raw, 7, (calling scrolls.len with raw))
+
+## Autentica un token Bearer fijo (comparación en tiempo constante).
+weave bearer_is with context as ref to context_module.Context, expected as string into bool:
+    let token as maybe string is calling bearer with context
+    if not token.is_present:
+        calling context.set_header with "WWW-Authenticate", BEARER_REALM
+        return false
+    var given as string is token.value
+    defer banish given
+    if not (calling same_secret with given, expected):
+        calling context.set_header with "WWW-Authenticate", BEARER_REALM
+        return false
+    return true
+
+## Firma un JWT HS256 con las `claims` que ya son JSON.
+##
+## ## Memoria
+## Devuelve el token propio; libéralo con `banish`.
+weave sign_hs256 with secret as string, claims as string into string:
+    var header as string is calling cipher.encode_base64_url with "{\"alg\":\"HS256\",\"typ\":\"JWT\"}"
+    defer banish header
+    var payload as string is calling cipher.encode_base64_url with claims
+    defer banish payload
+    var unsigned as string is "{header}.{payload}"
+    defer banish unsigned
+    var signature as string is calling digest.hmac_sha256_hex with secret, unsigned
+    defer banish signature
+    var signed_part as string is calling cipher.encode_base64_url with signature
+    defer banish signed_part
+    return "{unsigned}.{signed_part}"
+
+## Comprueba firma y estructura de un JWT HS256.
+weave verify_hs256 with secret as string, token as string into bool:
+    var len as int is calling scrolls.len with token
+    var last as int is -1
+    var second as int is -1
+    var i as int is 0
+    while i < len:
+        if (token at i) == ".":
+            set second is last
+            set last is i
+        set i is i + 1
+    if second <= 0 or last <= second + 1:
+        return false
+    var unsigned as string is calling scrolls.substring with token, 0, last
+    defer banish unsigned
+    var signature as string is calling scrolls.substring with token, last + 1, len
+    defer banish signature
+    var expected as string is calling digest.hmac_sha256_hex with secret, unsigned
+    defer banish expected
+    var encoded as string is calling cipher.encode_base64_url with expected
+    defer banish encoded
+    return calling same_secret with encoded, signature
+
+## Claims (JSON) de un JWT HS256 si la firma es válida.
+##
+## ## Memoria
+## Devuelve el JSON propio; libéralo con `banish`.
+weave claims with secret as string, token as string into maybe string:
+    if not (calling verify_hs256 with secret, token):
+        return maybe none
+    var len as int is calling scrolls.len with token
+    var first as int is -1
+    var last as int is -1
+    var i as int is 0
+    while i < len:
+        if (token at i) == ".":
+            if first < 0:
+                set first is i
+            else:
+                set last is i
+                set i is len
+            set i is i + 1
+        else:
+            set i is i + 1
+    if first < 0 or last <= first + 1:
+        return maybe none
+    var payload as string is calling scrolls.substring with token, first + 1, last
+    defer banish payload
+    return calling cipher.decode_base64_url with payload
+
+## JWT del `Authorization: Bearer` con firma válida; deja `WWW-Authenticate`
+## si no lo es.
+##
+## ## Memoria
+## Devuelve las claims propias; libéralas con `banish`.
+weave bearer_jwt with context as ref to context_module.Context, secret as string into maybe string:
+    let token as maybe string is calling bearer with context
+    if not token.is_present:
+        calling context.set_header with "WWW-Authenticate", BEARER_REALM
+        return maybe none
+    var given as string is token.value
+    defer banish given
+    var found as maybe string is calling claims with secret, given
+    if not found.is_present:
+        calling context.set_header with "WWW-Authenticate", "Bearer error=\"invalid_token\""
+        return maybe none
+    return found
+
+test "basic decodifica y valida":
+    calling ward.assert_true with (calling same_secret with "abc", "abc")
+    calling ward.assert_false with (calling same_secret with "abc", "abd")
+
+test "jwt firma y verifica":
+    var secret as string is "s3creto"
+    var token as string is calling sign_hs256 with secret, "{\"sub\":\"ada\"}"
+    defer banish token
+    calling ward.assert_true with (calling verify_hs256 with secret, token)
+    var bad as string is "{token}x"
+    defer banish bad
+    calling ward.assert_false with (calling verify_hs256 with secret, bad)
+    let payload as maybe string is calling claims with secret, token
+    calling ward.assert_true with payload.is_present
+    calling ward.assert_eq_string with payload.value, "{\"sub\":\"ada\"}"
