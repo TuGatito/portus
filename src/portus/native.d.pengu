@@ -1,0 +1,8 @@
+## Declaraciones C de portus (privado): transporte TCP, parser HTTP y utilidades
+## nativas. La implementación vive en `include/portus_native.h`.
+##
+## Este módulo no forma parte de la API pública: importa `portus`.
+include "portus_native.h"
+
+## Devuelve `n + 1`. Prueba de humo del puente C.
+declare portus_native_ping with n as int into int

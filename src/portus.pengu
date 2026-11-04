@@ -1,0 +1,24 @@
+## portus — framework HTTP para PenguScript, al estilo de Express.js y Hono.js.
+##
+## Un servidor HTTP con router, contexto de petición y middleware componible.
+##
+## ```pengu
+## import portus
+##
+## weave main into int:
+##     return calling portus.ping with 41
+## ```
+##
+## Estado actual: esqueleto de la fase F0 (paquete instalable + puente C). La
+## API pública objetivo se documenta en `scratch/portus-api.md` y crece por
+## fases; lo que existe hoy es lo que aparece en estas páginas.
+import portus.native
+
+## Versión de portus que se está usando.
+const PORTUS_VERSION as string is "0.1.0"
+
+## Comprueba que el puente nativo responde (prueba de humo del paquete).
+##
+## Devuelve `n + 1`. No forma parte de la API pública estable.
+weave ping with n as int into int:
+    return calling portus.native.portus_native_ping with n

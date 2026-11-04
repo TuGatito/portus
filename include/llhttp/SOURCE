@@ -1,0 +1,31 @@
+llhttp 9.4.3
+===============
+
+Origen:    https://github.com/nodejs/llhttp (tag release/v9.4.3)
+Descarga:  https://codeload.github.com/nodejs/llhttp/tar.gz/refs/tags/release/v9.4.3
+Licencia:  MIT (Copyright Fedor Indutny, 2018). Ver include/llhttp/LICENSE.
+Fecha:     2026-11-04
+
+Archivos
+--------
+- `llhttp.h`: cabecera pública, copiada tal cual.
+- `llhttp_impl.h`: amalgamado de `src/api.c`, `src/http.c` y
+  `src/llhttp.c` (en ese orden), generado por `tools/vendor_llhttp.sh`.
+- `LICENSE`: licencia MIT original.
+
+Por qué amalgamado
+------------------
+llhttp se compila normalmente en tres unidades de traducción. Portus se
+instala como dependencia y el consumidor compila un único bundle de C: todo
+el código nativo tiene que entrar por una cabecera. El script quita las
+declaraciones anticipadas que el generador repite en `llhttp.c` para las
+funciones definidas en `api.c`/`http.c` (en una sola unidad chocarían) y
+silencia `-Wpointer-sign` alrededor del bloque generado.
+
+Actualizar
+----------
+```sh
+tools/vendor_llhttp.sh 9.5.0   # cambia la versión; revisa el diff
+```
+La compilación de humo del script usa `-Wall -Werror`: si una versión nueva
+introduce avisos o cambia el generador, el script falla y hay que adaptarlo.
