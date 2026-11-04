@@ -200,3 +200,28 @@ weave mount_static with app as ref to application_module.Application, prefix as 
 
 weave ping with n as int into int:
     return calling transport.native_ping with n
+
+# --- WebSocket ------------------------------------------------------------
+
+import portus.websocket as websocket_module
+
+## Conexión WebSocket viva.
+alias WebSocketConn as websocket_module.Conn
+
+## Handler WebSocket con estado.
+alias WebSocketHandler as websocket_module.SocketHandler
+
+## Función que recibe cada mensaje WebSocket.
+alias WebSocketMessageFn as websocket_module.MessageFn
+
+## Construye un handler WebSocket con estado.
+weave ws_handler with invoke as WebSocketMessageFn, data as ref to void into websocket_module.SocketHandler:
+    return calling websocket_module.handler_with with invoke, data
+
+## Texto de un mensaje WebSocket (copia propia).
+weave ws_text with payload as ref to frozen byte, length as int into string:
+    return calling websocket_module.text_of with payload, length
+
+## Acepta la conexión WebSocket de esta petición.
+weave ws_upgrade with context as ref to Context, handler as WebSocketHandler into bool:
+    return calling websocket_module.upgrade with context, handler

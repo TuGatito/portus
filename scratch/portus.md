@@ -295,6 +295,40 @@ Pendiente de F2: nada bloqueante; sesiones firmadas se difieren a F4 (necesitan
 `HMAC-SHA256` de `std.digest` y un `Set-Cookie` firmado que ya cabe en
 `portus.cookie`).
 
+F3 — **cerrado (WebSocket)**. Hecho y verificado:
+
+- C (`include/portus_native.h`): SHA-1 y base64 propios (no hay SHA-1 en
+  `std.digest`), `portus_native_ws_upgrade` (valida `Upgrade`/`Sec-WebSocket-Key`
+  y responde `101` con `Sec-WebSocket-Accept`), `portus_native_ws_send` y
+  `portus_native_ws_close`; `portus_ws_consume` parsea frames, exige máscara,
+  contesta `ping` con `pong`, cierra con `1000`, rechaza fragmentación con
+  `1003` y limita el mensaje a 1 MiB. `portus_conn_process` deriva a
+  `portus_ws_consume` en cuanto la conexión es WebSocket (incluido el frame que
+  llegue en el mismo `recv` que el handshake).
+- Pengu: `src/portus/websocket.pengu` con `Conn` (`send_text`, `send_bytes`,
+  `close`, `is_text`), `SocketHandler` (fn + `data`, sin closures), `handler_with`,
+  `text_of` y `upgrade(context, handler)`. El handler se copia a la arena del
+  heap con `memoria.alloc` y se libera con `banish` al recibir el cierre.
+- La fachada expone `WebSocketConn`, `WebSocketHandler`, `WebSocketMessageFn`,
+  `ws_handler`, `ws_text` y `ws_upgrade`.
+- Gate: `tests/e2e_ws.sh` — proyecto temporal con `psc add <repo> --trust`,
+  handshake real, comprobación del `Sec-WebSocket-Accept`, eco de texto corto y
+  de 300 bytes, `ping`/`pong` y cierre → `OK e2e websocket (puerto …)`.
+- Tests: 36 (`psc test`), incluidos `text_of` y `handler_with`.
+
+**Decisión de diseño:** un mensaje = un frame (sin fragmentación ni
+extensiones en v1), y el estado por conexión va en el `data` del handler, no en
+variables globales. El servidor sigue siendo de un hilo: el callback debe ser
+rápido; para trabajo largo se difiere un pool de hilos (ver
+[`portus-deferred.md`](portus-deferred.md)).
+
+Bugs nuevos del compilador detectados aquí (documentados en
+[`portus-compiler-fixes.md`](portus-compiler-fixes.md)): 17 (un `rune` local con
+el mismo nombre que un tipo importado resuelve al importado en unas posiciones y
+genera C inválido) y 18 (un `alias` de tipo en posición de retorno no acepta el
+tipo subyacente).
+
+
 ---
 
 ## 8. Estado del repositorio

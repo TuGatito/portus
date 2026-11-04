@@ -909,3 +909,41 @@ Comportamiento de los estáticos: `GET /static/*file`; `..` o rutas absolutas �
 `If-None-Match` → 304; `Range: bytes=a-b` → 206 con `Content-Range`, rango
 inválido → 416. `use_compress` es un finisher: `Accept-Encoding` con gzip,
 cuerpo ≥ 860 bytes y tipo compresible.
+
+## F3 — WebSocket
+
+```pengu
+# portus.websocket
+rune Conn:
+    _res as ref to void
+
+alias MessageFn as weave with data as ref to void, conn as ref to Conn, opcode as int, payload as ref to frozen byte, length as int into void
+
+rune SocketHandler:
+    invoke as MessageFn
+    data as ref to void
+
+weave handler_with with invoke as MessageFn, data as ref to void into SocketHandler
+weave text_of with payload as ref to frozen byte, length as int into string
+weave upgrade with context as ref to Context, handler as SocketHandler into bool
+
+# métodos de Conn
+weave send_text with body as string into bool
+weave send_bytes with data as ref to frozen byte, length as int into bool
+weave close into bool
+weave is_text with opcode as int into bool
+
+# fachada
+alias WebSocketConn as websocket.Conn
+alias WebSocketHandler as websocket.SocketHandler
+alias WebSocketMessageFn as websocket.MessageFn
+weave ws_handler with invoke as WebSocketMessageFn, data as ref to void into websocket.SocketHandler
+weave ws_text with payload as ref to frozen byte, length as int into string
+weave ws_upgrade with context as ref to Context, handler as WebSocketHandler into bool
+```
+
+Nativo añadido: `portus_native_ws_upgrade`, `portus_native_ws_send` y
+`portus_native_ws_close`, más el tipo `portus_ws_fn`. El mensaje es un frame
+completo (sin fragmentación ni `permessage-deflate` en v1); `ping` se responde en
+C; el cierre con código 1000 lo inicia el C o el cliente, y el callback recibe
+`opcode == 8` para liberar su estado.

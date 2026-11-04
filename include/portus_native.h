@@ -41,6 +41,7 @@
 #include <signal.h>
 #include <strings.h>
 #include <sys/socket.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -128,6 +129,10 @@ typedef void (*portus_handler_fn)(void *userdata, void *request, void *response)
 typedef struct portus_request portus_request_t;
 typedef struct portus_response portus_response_t;
 
+/* Callback de WebSocket: opcode 1 texto, 2 binario, 8 cierre. */
+typedef void (*portus_ws_fn)(void *userdata, void *response, int opcode,
+                             const unsigned char *data, int len);
+
 typedef struct portus_conn {
     int fd;
     int active;
@@ -145,6 +150,10 @@ typedef struct portus_conn {
     portus_buffer in;
     portus_buffer out;
     size_t out_written;
+    int ws;
+    portus_ws_fn ws_cb;
+    void *ws_data;
+    int ws_closed;
 } portus_conn;
 
 /* Adelanto: el streaming necesita vaciar la conexión. */
@@ -753,6 +762,334 @@ static PORTUS_MAYBE_UNUSED int portus_native_response_stream_end(void *res) {
     return 0;
 }
 
+
+/* ------------------------------------------------------------------ */
+/* WebSocket (RFC 6455, sin extensiones ni fragmentación)              */
+/* ------------------------------------------------------------------ */
+
+static PORTUS_MAYBE_UNUSED void portus_sha1(const unsigned char *data, size_t len,
+                                            unsigned char out[20]) {
+    uint32_t h[5] = {0x67452301u, 0xEFCDAB89u, 0x98BADCFEu, 0x10325476u, 0xC3D2E1F0u};
+    size_t total = len;
+    size_t padded = ((len + 8) / 64 + 1) * 64;
+    unsigned char *buf = (unsigned char *)malloc(padded);
+    size_t i;
+    uint64_t bits = (uint64_t)len * 8u;
+    if (buf == NULL) {
+        memset(out, 0, 20);
+        return;
+    }
+    memcpy(buf, data, len);
+    buf[len] = 0x80;
+    memset(buf + len + 1, 0, padded - len - 1);
+    for (i = 0; i < 8; i++) {
+        buf[padded - 1 - i] = (unsigned char)((bits >> (8u * i)) & 0xFFu);
+    }
+    for (i = 0; i < padded; i += 64) {
+        uint32_t w[80];
+        uint32_t a;
+        uint32_t b;
+        uint32_t c;
+        uint32_t d;
+        uint32_t e;
+        size_t j;
+        for (j = 0; j < 16; j++) {
+            w[j] = ((uint32_t)buf[i + j * 4] << 24) | ((uint32_t)buf[i + j * 4 + 1] << 16) |
+                   ((uint32_t)buf[i + j * 4 + 2] << 8) | (uint32_t)buf[i + j * 4 + 3];
+        }
+        for (j = 16; j < 80; j++) {
+            uint32_t v = w[j - 3] ^ w[j - 8] ^ w[j - 14] ^ w[j - 16];
+            w[j] = (v << 1) | (v >> 31);
+        }
+        a = h[0];
+        b = h[1];
+        c = h[2];
+        d = h[3];
+        e = h[4];
+        for (j = 0; j < 80; j++) {
+            uint32_t f;
+            uint32_t k;
+            uint32_t t;
+            if (j < 20) {
+                f = (b & c) | ((~b) & d);
+                k = 0x5A827999u;
+            } else if (j < 40) {
+                f = b ^ c ^ d;
+                k = 0x6ED9EBA1u;
+            } else if (j < 60) {
+                f = (b & c) | (b & d) | (c & d);
+                k = 0x8F1BBCDCu;
+            } else {
+                f = b ^ c ^ d;
+                k = 0xCA62C1D6u;
+            }
+            t = ((a << 5) | (a >> 27)) + f + e + k + w[j];
+            e = d;
+            d = c;
+            c = (b << 30) | (b >> 2);
+            b = a;
+            a = t;
+        }
+        h[0] += a;
+        h[1] += b;
+        h[2] += c;
+        h[3] += d;
+        h[4] += e;
+    }
+    free(buf);
+    for (i = 0; i < 5; i++) {
+        out[i * 4] = (unsigned char)((h[i] >> 24) & 0xFFu);
+        out[i * 4 + 1] = (unsigned char)((h[i] >> 16) & 0xFFu);
+        out[i * 4 + 2] = (unsigned char)((h[i] >> 8) & 0xFFu);
+        out[i * 4 + 3] = (unsigned char)(h[i] & 0xFFu);
+    }
+    (void)total;
+}
+
+static PORTUS_MAYBE_UNUSED int portus_base64(const unsigned char *in, int len, char *out,
+                                             size_t out_cap) {
+    static const char table[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    int i;
+    size_t o = 0;
+    if (out_cap < (size_t)(((len + 2) / 3) * 4 + 1)) {
+        return -1;
+    }
+    for (i = 0; i + 2 < len; i += 3) {
+        uint32_t v = ((uint32_t)in[i] << 16) | ((uint32_t)in[i + 1] << 8) | in[i + 2];
+        out[o++] = table[(v >> 18) & 63u];
+        out[o++] = table[(v >> 12) & 63u];
+        out[o++] = table[(v >> 6) & 63u];
+        out[o++] = table[v & 63u];
+    }
+    if (i < len) {
+        uint32_t v = (uint32_t)in[i] << 16;
+        if (i + 1 < len) {
+            v |= (uint32_t)in[i + 1] << 8;
+        }
+        out[o++] = table[(v >> 18) & 63u];
+        out[o++] = table[(v >> 12) & 63u];
+        out[o++] = (i + 1 < len) ? table[(v >> 6) & 63u] : '=';
+        out[o++] = '=';
+    }
+    out[o] = 0;
+    return (int)o;
+}
+
+static PORTUS_MAYBE_UNUSED int portus_conn_header_contains(portus_conn *c, const char *name,
+                                                           const char *needle) {
+    size_t i;
+    size_t nlen = strlen(name);
+    for (i = 0; i < c->request.header_count; i++) {
+        if (c->request.headers[i].name_len == nlen &&
+            strncasecmp(c->request.headers[i].name, name, nlen) == 0) {
+            return strcasestr(c->request.headers[i].value, needle) != NULL;
+        }
+    }
+    return 0;
+}
+
+/* Envía un frame WebSocket. */
+static PORTUS_MAYBE_UNUSED int portus_ws_send_frame(portus_conn *c, int opcode,
+                                                    const unsigned char *data, int len) {
+    unsigned char head[10];
+    size_t head_len = 0;
+    if (c == NULL || c->fd < 0) {
+        return -1;
+    }
+    head[0] = (unsigned char)(0x80 | (opcode & 0x0F));
+    if (len < 126) {
+        head[1] = (unsigned char)len;
+        head_len = 2;
+    } else if (len < 65536) {
+        head[1] = 126;
+        head[2] = (unsigned char)((len >> 8) & 0xFF);
+        head[3] = (unsigned char)(len & 0xFF);
+        head_len = 4;
+    } else {
+        head[1] = 127;
+        memset(head + 2, 0, 4);
+        head[6] = (unsigned char)((len >> 24) & 0xFF);
+        head[7] = (unsigned char)((len >> 16) & 0xFF);
+        head[8] = (unsigned char)((len >> 8) & 0xFF);
+        head[9] = (unsigned char)(len & 0xFF);
+        head_len = 10;
+    }
+    if (portus_buf_append(&c->out, head, head_len) != PORTUS_NATIVE_OK ||
+        (len > 0 && portus_buf_append(&c->out, data, (size_t)len) != PORTUS_NATIVE_OK)) {
+        return -1;
+    }
+    return portus_conn_flush(c);
+}
+
+/* Procesa los frames completos que haya en `c->in`. */
+static PORTUS_MAYBE_UNUSED void portus_ws_consume(portus_conn *c) {
+    while (c->in.len >= 2) {
+        unsigned char *p = (unsigned char *)c->in.data;
+        int fin = (p[0] & 0x80) != 0;
+        int opcode = p[0] & 0x0F;
+        int masked = (p[1] & 0x80) != 0;
+        unsigned long long len = (unsigned long long)(p[1] & 0x7F);
+        size_t off = 2;
+        unsigned char mask[4];
+        unsigned char *payload;
+        int i;
+        if (len == 126) {
+            if (c->in.len < 4) {
+                return;
+            }
+            len = ((unsigned long long)p[2] << 8) | p[3];
+            off = 4;
+        } else if (len == 127) {
+            if (c->in.len < 10) {
+                return;
+            }
+            len = 0;
+            for (i = 2; i < 10; i++) {
+                len = (len << 8) | p[i];
+            }
+            off = 10;
+        }
+        if (!masked) {
+            /* El cliente debe enmascarar: cerramos. */
+            c->close_after_write = 1;
+            break;
+        }
+        if (c->in.len < off + 4) {
+            return;
+        }
+        memcpy(mask, p + off, 4);
+        off += 4;
+        if (len > 1024u * 1024u) {
+            c->close_after_write = 1;
+            break;
+        }
+        if (c->in.len < off + (size_t)len) {
+            return;
+        }
+        payload = (unsigned char *)malloc((size_t)len + 1);
+        if (payload == NULL) {
+            c->close_after_write = 1;
+            break;
+        }
+        for (i = 0; i < (int)len; i++) {
+            payload[i] = (unsigned char)(p[off + (size_t)i] ^ mask[i % 4]);
+        }
+        payload[len] = 0;
+        if (!fin) {
+            /* Sin fragmentación en v1: cerramos con 1003. */
+            unsigned char close_payload[2];
+            close_payload[0] = 0x03;
+            close_payload[1] = 0xEB;
+            (void)portus_ws_send_frame(c, 0x8, close_payload, 2);
+            c->close_after_write = 1;
+            free(payload);
+            break;
+        }
+        if (opcode == 0x8) {
+            unsigned char close_payload[2];
+            close_payload[0] = 0x03;
+            close_payload[1] = 0xE8;
+            (void)portus_ws_send_frame(c, 0x8, close_payload, 2);
+            c->ws_closed = 1;
+            c->close_after_write = 1;
+            if (c->ws_cb != NULL) {
+                c->ws_cb(c->ws_data, (void *)&c->response, 8, payload, (int)len);
+            }
+        } else if (opcode == 0x9) {
+            (void)portus_ws_send_frame(c, 0xA, payload, (int)len);
+        } else if (opcode == 0xA) {
+            /* pong: ignorar */
+        } else if (opcode == 0x1 || opcode == 0x2) {
+            if (c->ws_cb != NULL) {
+                c->ws_cb(c->ws_data, (void *)&c->response, opcode, payload, (int)len);
+            }
+        } else {
+            c->close_after_write = 1;
+        }
+        free(payload);
+        memmove(c->in.data, c->in.data + off + (size_t)len,
+                c->in.len - (off + (size_t)len));
+        c->in.len -= off + (size_t)len;
+        if (c->ws_closed || c->close_after_write) {
+            break;
+        }
+    }
+}
+
+/* Acepta la conexión WebSocket de la petición actual. */
+static PORTUS_MAYBE_UNUSED int portus_native_ws_upgrade(void *res, portus_ws_fn cb,
+                                                        void *userdata) {
+    static const char *guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    struct portus_response *r = (struct portus_response *)res;
+    portus_conn *c = r->conn;
+    unsigned char key[128];
+    unsigned char digest[20];
+    char accept[40];
+    char head[256];
+    size_t i;
+    size_t key_len = 0;
+    if (c == NULL || c->fd < 0) {
+        return -1;
+    }
+    if (!portus_conn_header_contains(c, "Upgrade", "websocket")) {
+        return -1;
+    }
+    for (i = 0; i < c->request.header_count; i++) {
+        if (c->request.headers[i].name_len == 17 &&
+            strncasecmp(c->request.headers[i].name, "Sec-WebSocket-Key", 17) == 0) {
+            key_len = c->request.headers[i].value_len;
+            if (key_len >= sizeof(key)) {
+                return -1;
+            }
+            memcpy(key, c->request.headers[i].value, key_len);
+            break;
+        }
+    }
+    if (key_len == 0) {
+        return -1;
+    }
+    memcpy(key + key_len, guid, strlen(guid));
+    portus_sha1(key, key_len + strlen(guid), digest);
+    if (portus_base64(digest, 20, accept, sizeof(accept)) < 0) {
+        return -1;
+    }
+    snprintf(head, sizeof(head),
+             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+             "Sec-WebSocket-Accept: %s\r\n\r\n",
+             accept);
+    portus_buf_clear(&c->out);
+    if (portus_buf_append_str(&c->out, head) != PORTUS_NATIVE_OK) {
+        return -1;
+    }
+    c->ws = 1;
+    c->ws_cb = cb;
+    c->ws_data = userdata;
+    c->ws_closed = 0;
+    r->sent = 1;
+    r->streaming = 0;
+    /* El flush puede quedar pendiente (EAGAIN): la conexión ya está
+     * actualizada y el bucle reintenta la escritura. */
+    (void)portus_conn_flush(c);
+    return 0;
+}
+
+/* Envía un texto por el WebSocket. */
+static PORTUS_MAYBE_UNUSED int portus_native_ws_send(void *res, int opcode,
+                                                     const unsigned char *data, int len) {
+    struct portus_response *r = (struct portus_response *)res;
+    return portus_ws_send_frame(r->conn, opcode, data, len);
+}
+
+/* Cierra el WebSocket. */
+static PORTUS_MAYBE_UNUSED int portus_native_ws_close(void *res) {
+    struct portus_response *r = (struct portus_response *)res;
+    unsigned char payload[2];
+    payload[0] = 0x03;
+    payload[1] = 0xE8;
+    return portus_ws_send_frame(r->conn, 0x8, payload, 2);
+}
+
 /* ------------------------------------------------------------------ */
 /* Conexiones                                                          */
 /* ------------------------------------------------------------------ */
@@ -907,6 +1244,10 @@ static PORTUS_MAYBE_UNUSED void portus_dispatch(portus_conn *c, portus_handler_f
     c->response.status = 200;
     c->response.conn = c;
     handler(userdata, (void *)&c->request, (void *)&c->response);
+    if (c->ws) {
+        /* El upgrade ya escribió el 101 y cambió el protocolo. */
+        return;
+    }
     if (c->response.streaming) {
         if (!c->response.stream_ended) {
             c->close_after_write = 1;
@@ -933,6 +1274,10 @@ static PORTUS_MAYBE_UNUSED void portus_conn_process(portus_conn *c, int keep_ali
                                 portus_handler_fn handler, void *userdata,
                                 portus_buffer *scratch) {
     size_t off = 0;
+    if (c->ws) {
+        portus_ws_consume(c);
+        return;
+    }
     while (off < c->in.len) {
         llhttp_errno_t err;
         size_t consumed;
@@ -947,6 +1292,16 @@ static PORTUS_MAYBE_UNUSED void portus_conn_process(portus_conn *c, int keep_ali
                 break;
             }
             portus_conn_reset_request(c);
+            if (c->ws) {
+                if (off < c->in.len) {
+                    memmove(c->in.data, c->in.data + off, c->in.len - off);
+                    c->in.len -= off;
+                } else {
+                    c->in.len = 0;
+                }
+                portus_ws_consume(c);
+                return;
+            }
             continue;
         }
         if (err != HPE_OK) {

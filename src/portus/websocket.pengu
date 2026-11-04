@@ -1,0 +1,134 @@
+## portus.websocket — WebSocket de servidor (RFC 6455).
+##
+## `upgrade(context, handler)` responde `101 Switching Protocols`, calcula
+## `Sec-WebSocket-Accept` y entrega cada mensaje al handler. Sin fragmentación
+## ni extensiones (v1): un frame por mensaje, cierre con código 1000.
+##
+## ## Ejemplo
+## ```pengu
+## weave on_message with conn as ref to portus.websocket.Conn, opcode as int, payload as ref to frozen byte, length as int into void:
+##     if opcode == 1:
+##         var text as string is calling portus.websocket.text_of with payload, length
+##         calling conn.send_text with text
+##         banish text
+##
+## weave chat with context as ref to portus.Context into result of void to portus.HttpError:
+##     let opened as bool is calling portus.websocket.upgrade with context, (calling portus.websocket.handler_with with on_message, (transmute 0 to ref to void))
+##     return calling portus.ok_void
+## ```
+##
+## ## Memoria
+## El handler se copia a un bloque del heap que se libera al cerrar la conexión.
+import std.memoria
+import std.ward
+import portus.context as context_module
+import portus.error
+import portus.handler as handler_module
+import portus.native as native_module
+import portus.text as text
+
+## Una conexión WebSocket viva.
+rune Conn:
+    ## Respuesta C de la que cuelga la conexión.
+    _res as ref to void
+
+## Función que recibe cada mensaje (`opcode` 1 texto, 2 binario, 8 cierre).
+alias MessageFn as weave with data as ref to void, conn as ref to Conn, opcode as int, payload as ref to frozen byte, length as int into void
+
+## Handler con su estado (no hay closures: el estado va en `data`).
+##
+## Se llama `SocketHandler` y no `Handler` para no chocar con el handler fino
+## de `portus.handler`.
+rune SocketHandler:
+    ## Qué hacer con cada mensaje.
+    invoke as MessageFn
+    ## Estado del usuario; prestado.
+    data as ref to void
+
+## Construye un handler con estado.
+weave handler_with with invoke as MessageFn, data as ref to void into SocketHandler:
+    return with invoke is invoke, data is data
+
+## Texto de un mensaje (copia propia).
+weave text_of with payload as ref to frozen byte, length as int into string:
+    return calling text.from_bytes with payload, length
+
+## Acepta la conexión y empieza a entregar mensajes.
+##
+## ## Memoria
+## Copia `handler` a un bloque nuevo; se libera al cerrar la conexión.
+weave upgrade with context as ref to context_module.Context, handler as SocketHandler into bool:
+    var box as ref to SocketHandler is calling memoria.alloc of SocketHandler
+    set box->invoke is handler.invoke
+    set box->data is handler.data
+    var response as ref to native_module.portus_response_t is context->response->_raw
+    var ok as int is calling native_module.portus_native_ws_upgrade with response, _dispatch, (calling _raw_handler with box)
+    if ok != 0:
+        banish box
+        return false
+    calling context.mark_sent
+    return true
+
+antiquus _raw_handler with box as ref to SocketHandler into ref to void:
+    r"""
+return (void *)box;
+"""
+
+## Trampolín C -> Pengu.
+weave _dispatch with userdata as ref to void, response as ref to void, opcode as int, payload as ref to frozen byte, length as int into void:
+    var box as ref to SocketHandler is transmute userdata to ref to SocketHandler
+    var conn as Conn is with _res is response
+    let handle as MessageFn is box->invoke
+    calling handle with box->data, sigil of conn, opcode, payload, length
+    if opcode == 8:
+        banish box
+    return
+
+## Envía un texto.
+weave _send_text with conn as ref to Conn, text as string into bool:
+    var response as ref to native_module.portus_response_t is transmute conn->_res to ref to native_module.portus_response_t
+    var ok as int is calling native_module.portus_native_ws_send with response, 1, (bytes of text), text.len
+    return ok == 0
+
+## Envía bytes binarios.
+weave _send_bytes with conn as ref to Conn, data as ref to frozen byte, length as int into bool:
+    var response as ref to native_module.portus_response_t is transmute conn->_res to ref to native_module.portus_response_t
+    var ok as int is calling native_module.portus_native_ws_send with response, 2, data, length
+    return ok == 0
+
+## Cierra la conexión con código 1000.
+weave _close with conn as ref to Conn into bool:
+    var response as ref to native_module.portus_response_t is transmute conn->_res to ref to native_module.portus_response_t
+    var ok as int is calling native_module.portus_native_ws_close with response
+    return ok == 0
+
+## Métodos de `Conn`.
+enchanting Conn:
+    ## Envía un texto.
+    weave send_text with body as string into bool:
+        return calling _send_text with self, body
+
+    ## Envía bytes binarios.
+    weave send_bytes with data as ref to frozen byte, length as int into bool:
+        return calling _send_bytes with self, data, length
+
+    ## Cierra la conexión.
+    weave close into bool:
+        return calling _close with self
+
+    ## `true` si el mensaje es de texto.
+    weave is_text with opcode as int into bool:
+        return opcode == 1
+
+test "text_of copia el payload":
+    let text as string is calling text_of with (bytes of "hola"), 4
+    calling ward.assert_eq_string with text, "hola"
+    banish text
+
+test "handler_with guarda el estado":
+    var marker as int is 7
+    let built as SocketHandler is calling handler_with with _noop, (sigil of marker)
+    calling ward.assert_true with built.data == (transmute (sigil of marker) to ref to void)
+
+weave _noop with data as ref to void, conn as ref to Conn, opcode as int, payload as ref to frozen byte, length as int into void:
+    return

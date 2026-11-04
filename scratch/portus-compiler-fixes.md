@@ -718,3 +718,61 @@ return "hola {shown}"
 **Arreglo propuesto:** reportar `E0000` en la interpolación cuando no se puede
 parsear la expresión, o aceptar `or else` (preferible) con paréntesis
 obligatorios.
+
+## 17. P2 — Un `rune` local con el mismo nombre que un tipo importado
+
+**Impacto:** silencioso hasta el C. Si un módulo define `rune Handler` y ya
+importa un `Handler` (el alias de `portus.handler`), hay posiciones en las que
+`Handler` resuelve al importado y el C generado es inválido:
+
+```
+void* _raw_handler(PenguResult (*box)(Context*)*) { ... }
+error: expected ‘;’, ‘,’ or ‘)’ before ‘*’ token
+```
+
+En otras posiciones resuelve al local, así que el error aparece lejos de la
+declaración y solo al compilar.
+
+**Repro:** módulo con `import portus.handler` y `rune Handler { invoke as ... }`;
+una función `antiquus _raw_handler with box as ref to Handler` emite el tipo del
+alias importado (`PenguResult (*)(Context*)`) en vez del rune local.
+
+**Workaround (portus):** renombrar el rune local (`Handler` →
+`SocketHandler`) y exportarlo con `alias` desde la fachada.
+
+**Arreglo propuesto:** la resolución de nombres debe preferir la declaración del
+módulo actual sobre un símbolo importado y, si hay ambigüedad real, emitir
+`E0046`/`W0005` en vez de elegir en silencio.
+
+## 18. P2 — Un `alias` de tipo en posición de retorno no acepta el subyacente
+
+**Impacto:** bloquea fachadas idiomáticas: `alias WebSocketHandler as
+websocket.SocketHandler` y `weave ws_handler ... into WebSocketHandler: return
+calling websocket.handler_with ...` da
+
+```
+error[E0005]: type mismatch: expected 'WebSocketHandler', got 'SocketHandler'
+```
+
+aunque el alias es transparente en parámetros y en variables.
+
+**Repro:**
+```pengu
+# a.pengu
+rune Thing:
+    n as int
+weave make into Thing:
+    return with n is 1
+
+# main.pengu
+import a
+alias Wrapped as a.Thing
+weave build into Wrapped:
+    return calling a.make
+```
+
+**Workaround (portus):** declarar el retorno con el tipo concreto
+(`websocket_module.SocketHandler`) y mantener el alias para los parámetros.
+
+**Arreglo propuesto:** en la comprobación de retorno, desenvolver `TkAlias`
+igual que ya se hace para llamadas (bug 2) y para `c_type` (0.28.2).
