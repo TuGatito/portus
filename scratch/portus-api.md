@@ -830,3 +830,38 @@ declare portus_stat with path as ref to char, size as ref to long, mtime_ms as r
 
 Las cabeceras se pasan como un blob ya serializado (`Nombre: valor\r\n` por
 línea) para no cruzar la frontera N veces por respuesta.
+
+## F2 — cuerpos, query, cookies y middlewares (implementado)
+
+Añadidos a `Context`:
+
+```pengu
+weave queries into portus.query.Query
+weave query_param with name as string into maybe string
+weave body_text into string
+weave body_json into result of portus.json.JsonValue to portus.json.JsonError
+weave body_form into portus.query.Query
+weave cookie with name as string into maybe string
+weave set_cookie with name as string, value as string into void
+weave set_cookie_with with name as string, value as string, options as portus.cookie.CookieOptions into void
+weave delete_cookie with name as string into void
+weave send_json with value as portus.json.JsonValue into void
+weave send_body_with_type with content_type as string, body as string into void
+weave status_code into int
+```
+
+Módulos nuevos:
+
+- `portus.query`: `Query`, `QueryPair`, `parse_query`, `query_get`, `query_has`,
+  `free_query`.
+- `portus.cookie`: `Cookies`, `CookiePair`, `CookieOptions`, `SESSION_OPTIONS`,
+  `parse_cookies`, `cookie_get`, `cookie_has`, `serialize_cookie`,
+  `clear_cookie`, `free_cookies`.
+- `portus.middleware`: `add_request_id`, `add_security_headers`, `add_cors`,
+  `add_logger`.
+- `portus.text` (interno): `free_strings`, `equals_ignore_case`, `from_bytes`,
+  `from_cstr`.
+
+Fachada: `use_request_id`, `use_security_headers`, `use_cors(app, origin)`,
+`use_logger`, y `handler.middleware_with(invoke, data)` para middlewares con
+configuración.

@@ -262,7 +262,24 @@ montado" es un `Group` (aplicación + prefijo) y `use_at(prefix)` para middlewar
 con prefijo. Un `Application` dentro de otra aplicación no aporta nada que el
 grupo no haga y complica el ownership.
 
-F1 — **cerrado** con el gate: build + 25 tests + e2e + 5 ejemplos.
+F1 — **cerrado** con el gate: build + 25 tests + e2e + 6 ejemplos.
+
+F2 — **en curso**. Hecho:
+- Cuerpos: `context.body_text`, `body_json` (directo a `std.json`), `body_form`.
+- Query string: `portus.query` (`parse_query`, `query_get`, `free_query`) y
+  `context.queries` / `context.query_param`.
+- Cookies: `portus.cookie` (`parse_cookies`, `cookie_get`, `serialize_cookie`,
+  `clear_cookie`, `CookieOptions`) y `context.cookie` / `set_cookie` /
+  `set_cookie_with` / `delete_cookie`.
+- Respuestas: `send_json`, `send_body_with_type`, `status_code`.
+- Middlewares: `portus.middleware.add_request_id`, `add_security_headers`,
+  `add_cors`, `add_logger` (con `application.middleware_with` para configuración).
+- Nativo: `portus_native_random_hex`, `portus_native_request_id`,
+  `portus_native_now_ms` (para `X-Request-Id` y duración del logger).
+- Tests: 30 (`psc test`), e2e ampliado (JSON, cookies, request-id, cabeceras de
+  seguridad y preflight CORS) y ejemplo `examples/cookies-and-json`.
+Pendiente de F2: estáticos con MIME/ETag/Range, compresión (gzip/deflate),
+negociación de contenido, sesiones firmadas.
 
 ---
 

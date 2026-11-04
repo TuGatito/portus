@@ -1,0 +1,130 @@
+## portus.query — lectura del query string (`?a=1&b=2`).
+##
+## Decodifica porcentajes y `+` como espacio (form encoding) y devuelve pares
+## en orden de aparición. Los nombres repetidos se conservan.
+##
+## ## Ejemplo
+## ```pengu
+## var query as portus.query.Query is calling portus.query.parse_query with "a=1&b=hola+mundo"
+## let a as maybe string is calling portus.query.query_get with query, "a"
+## ```
+##
+## ## Memoria
+## `parse_query` devuelve un valor con memoria propia; libéralo con
+## `free_query` (o `query_drop` si solo la usaste).
+import std.cipher
+import std.scrolls
+import std.ward
+import portus.text
+
+## Un par nombre/valor del query string.
+rune QueryPair:
+    ## Nombre ya decodificado.
+    name as string
+    ## Valor ya decodificado.
+    value as string
+
+## El query string de una petición, en orden.
+rune Query:
+    ## Pares en el orden en que llegaron.
+    pairs as list of QueryPair
+
+## Decodifica `raw` (`a=1&b=2`) en pares.
+##
+## Un par sin `=` se guarda con valor `""`. Un porcentaje inválido deja el
+## texto tal cual (no falla la petición entera).
+##
+## ## Memoria
+## Devuelve un valor propio; libéralo con `free_query`.
+weave parse_query with raw as string into Query:
+    var pairs as list of QueryPair is []
+    if raw.len == 0:
+        return with pairs is pairs
+    var parts as list of string is calling scrolls.split with raw, "&"
+    var i as int is 0
+    while i < parts.len:
+        var part as string is (parts at i)
+        if part.len > 0:
+            var eq as int is calling scrolls.index_of with part, "="
+            var name_raw as string is ""
+            var value_raw as string is ""
+            if eq < 0:
+                set name_raw is part
+            else:
+                set name_raw is calling scrolls.substring with part, 0, eq
+                set value_raw is calling scrolls.substring with part, eq + 1, part.len
+            var name as string is calling _decode with name_raw
+            var value as string is calling _decode with value_raw
+            if eq >= 0:
+                banish value_raw
+            banish name_raw
+            calling pairs.push with with name is name, value is value
+        set i is i + 1
+    calling text.free_strings with parts
+    return with pairs is pairs
+
+## Primer valor de `name`, o `none`.
+##
+## ## Memoria
+## Copia propia; libérala o pásala a `banish`.
+weave query_get with query as Query, name as string into maybe string:
+    var i as int is 0
+    while i < query.pairs.len:
+        var pair as QueryPair is (query.pairs at i)
+        if (calling scrolls.compare with pair.name, name) == 0:
+            return some (calling scrolls.substring with pair.value, 0, pair.value.len)
+        set i is i + 1
+    return maybe none
+
+## `true` si el query string trae `name`.
+weave query_has with query as Query, name as string into bool:
+    var i as int is 0
+    while i < query.pairs.len:
+        var pair as QueryPair is (query.pairs at i)
+        if (calling scrolls.compare with pair.name, name) == 0:
+            return true
+        set i is i + 1
+    return false
+
+## Libera el query string y todos sus pares.
+weave free_query with query as Query into void:
+    var i as int is 0
+    while i < query.pairs.len:
+        var pair as QueryPair is (query.pairs at i)
+        banish pair.name
+        banish pair.value
+        set i is i + 1
+    banish query.pairs
+
+## Decodifica un componente (`%20`, `+` como espacio).
+##
+## Nunca falla: si el porcentaje es inválido devuelve una copia tal cual.
+weave _decode with raw as string into string:
+    if raw.len == 0:
+        return ""
+    var plus_fixed as string is calling scrolls.replace_all with raw, "+", " "
+    var decoded as maybe string is calling cipher.decode_url with plus_fixed
+    banish plus_fixed
+    if v as string is decoded:
+        # El maybe es dueño del payload: se copia antes de liberar la caja.
+        var out as string is "{v}"
+        banish decoded
+        return out
+    banish decoded
+    return calling scrolls.substring with raw, 0, raw.len
+
+test "parse_query decodifica y conserva el orden":
+    var q as Query is calling parse_query with "a=1&b=hola+mundo&c=%C3%A9"
+    calling ward.assert_eq_int with q.pairs.len, 3
+    let a as maybe string is calling query_get with q, "a"
+    calling ward.assert_eq_string with (a or else "?"), "1"
+    let b as maybe string is calling query_get with q, "b"
+    calling ward.assert_eq_string with (b or else "?"), "hola mundo"
+    calling free_query with q
+
+test "parse_query acepta un par sin igual":
+    var q as Query is calling parse_query with "flag&x=2"
+    let v as maybe string is calling query_get with q, "flag"
+    calling ward.assert_eq_string with (v or else "?"), ""
+    calling ward.assert_true with (calling query_has with q, "x")
+    calling free_query with q

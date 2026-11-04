@@ -17,6 +17,9 @@ alias portus_response_t as opaque
 
 declare portus_native_ping with n as int into int
 declare portus_native_last_error into ref to frozen char
+declare portus_native_random_hex with out as ref to byte, bytes as int into int
+declare portus_native_now_ms into long
+declare portus_native_request_id into ref to frozen char
 
 # --- Servidor -------------------------------------------------------------
 

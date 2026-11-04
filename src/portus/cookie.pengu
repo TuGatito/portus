@@ -1,0 +1,155 @@
+## portus.cookie — lectura y escritura de cookies HTTP.
+##
+## `parse_cookies` lee la cabecera `Cookie` de la petición (`a=1; b=2`) y
+## `serialize_cookie` produce un valor de `Set-Cookie` con sus atributos.
+##
+## ## Ejemplo
+## ```pengu
+## calling context.set_header with "Set-Cookie", (calling portus.cookie.serialize_cookie with "sid", "abc", portus.cookie.session_options)
+## ```
+##
+## ## Memoria
+## `parse_cookies` devuelve un valor propio; libéralo con `free_cookies`.
+## Los strings de `serialize_cookie` son propios.
+import std.scrolls
+import std.ward
+import portus.text
+
+## Una cookie de la petición.
+rune CookiePair:
+    ## Nombre tal cual vino.
+    name as string
+    ## Valor tal cual vino (sin decodificar).
+    value as string
+
+## Las cookies de una petición, en orden.
+rune Cookies:
+    ## Pares en el orden de la cabecera.
+    pairs as list of CookiePair
+
+## Atributos de una cookie de respuesta.
+##
+## `max_age` negativo omite `Max-Age`. `same_site` vacío omite `SameSite`;
+## los valores habituales son `"Lax"`, `"Strict"` y `"None"`.
+rune CookieOptions:
+    ## Segundos de vida; negativo = cookie de sesión.
+    max_age as int
+    ## Ruta visible; vacío = `/` del navegador.
+    path as string
+    ## `HttpOnly` (no visible para JavaScript).
+    http_only as bool
+    ## `Secure` (solo HTTPS).
+    secure as bool
+    ## `SameSite`; vacío lo omite.
+    same_site as string
+
+## Opciones de una cookie de sesión razonable: `HttpOnly`, `SameSite=Lax`.
+const SESSION_OPTIONS as CookieOptions is with max_age is -1, path is "/", http_only is true, secure is false, same_site is "Lax"
+
+## Lee la cabecera `Cookie` completa.
+##
+## Ignora segmentos vacíos y espacios sobrantes. Un segmento sin `=` se guarda
+## con valor `""`.
+##
+## ## Memoria
+## Devuelve un valor propio; libéralo con `free_cookies`.
+weave parse_cookies with header as string into Cookies:
+    var pairs as list of CookiePair is []
+    if header.len == 0:
+        return with pairs is pairs
+    var parts as list of string is calling scrolls.split with header, ";"
+    var i as int is 0
+    while i < parts.len:
+        var part as string is (parts at i)
+        var trimmed as string is calling scrolls.trim with part
+        if trimmed.len > 0:
+            var eq as int is calling scrolls.index_of with trimmed, "="
+            var name as string is ""
+            var value as string is ""
+            if eq < 0:
+                set name is calling scrolls.substring with trimmed, 0, trimmed.len
+            else:
+                set name is calling scrolls.substring with trimmed, 0, eq
+                set value is calling scrolls.substring with trimmed, eq + 1, trimmed.len
+            calling pairs.push with with name is name, value is value
+        banish trimmed
+        set i is i + 1
+    calling text.free_strings with parts
+    return with pairs is pairs
+
+## Valor de la cookie `name`, o `none`.
+##
+## ## Memoria
+## Copia propia; libérala o pásala a `banish`.
+weave cookie_get with cookies as Cookies, name as string into maybe string:
+    var i as int is 0
+    while i < cookies.pairs.len:
+        var pair as CookiePair is (cookies.pairs at i)
+        if (calling scrolls.compare with pair.name, name) == 0:
+            return some (calling scrolls.substring with pair.value, 0, pair.value.len)
+        set i is i + 1
+    return maybe none
+
+## `true` si la petición trae la cookie `name`.
+weave cookie_has with cookies as Cookies, name as string into bool:
+    var i as int is 0
+    while i < cookies.pairs.len:
+        var pair as CookiePair is (cookies.pairs at i)
+        if (calling scrolls.compare with pair.name, name) == 0:
+            return true
+        set i is i + 1
+    return false
+
+## Libera las cookies y sus strings.
+weave free_cookies with cookies as Cookies into void:
+    var i as int is 0
+    while i < cookies.pairs.len:
+        var pair as CookiePair is (cookies.pairs at i)
+        banish pair.name
+        banish pair.value
+        set i is i + 1
+    banish cookies.pairs
+
+## Construye el valor de `Set-Cookie` para `name=value`.
+##
+## ## Memoria
+## Devuelve un string propio.
+weave serialize_cookie with name as string, value as string, options as CookieOptions into string:
+    var out as string is "{name}={value}"
+    if options.path.len > 0:
+        set out is "{out}; Path={options.path}"
+    if options.max_age >= 0:
+        set out is "{out}; Max-Age={options.max_age}"
+    if options.http_only:
+        set out is "{out}; HttpOnly"
+    if options.secure:
+        set out is "{out}; Secure"
+    if options.same_site.len > 0:
+        set out is "{out}; SameSite={options.same_site}"
+    return out
+
+## Construye el `Set-Cookie` que borra una cookie (`Max-Age=0`).
+##
+## ## Memoria
+## Devuelve un string propio.
+weave clear_cookie with name as string, path as string into string:
+    return "{name}=; Path={path}; Max-Age=0; HttpOnly"
+
+test "parse_cookies lee pares y tolera espacios":
+    var cookies as Cookies is calling parse_cookies with "sid=abc; theme=dark; bare"
+    calling ward.assert_eq_int with cookies.pairs.len, 3
+    let sid as maybe string is calling cookie_get with cookies, "sid"
+    calling ward.assert_eq_string with (sid or else "?"), "abc"
+    calling ward.assert_true with (calling cookie_has with cookies, "bare")
+    calling free_cookies with cookies
+
+test "serialize_cookie escribe atributos":
+    var opts as CookieOptions is with max_age is 60, path is "/app", http_only is true, secure is true, same_site is "Strict"
+    let text as string is calling serialize_cookie with "sid", "abc", opts
+    calling ward.assert_eq_string with text, "sid=abc; Path=/app; Max-Age=60; HttpOnly; Secure; SameSite=Strict"
+    banish text
+
+test "clear_cookie pone Max-Age=0":
+    let text as string is calling clear_cookie with "sid", "/"
+    calling ward.assert_eq_string with text, "sid=; Path=/; Max-Age=0; HttpOnly"
+    banish text

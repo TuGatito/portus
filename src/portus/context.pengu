@@ -13,7 +13,10 @@
 ##
 ## ## Memoria
 ## El despachador crea y libera el contexto; no lo guardes.
+import std.json
 import std.scrolls
+import portus.cookie as cookie_module
+import portus.query as query_module
 import portus.route as route
 import portus.transport as transport
 
@@ -25,6 +28,8 @@ rune Context:
     response as ref to transport.Response
     ## Parámetros capturados por el patrón.
     params as route.Params
+    ## Momento (ms monótonos) en que el despachador empezó la petición.
+    started_ms as long
 
 enchanting Context:
     ## Valor de un parámetro de ruta.
@@ -62,6 +67,16 @@ enchanting Context:
         var response as ref to transport.Response is self->response
         calling response.set_header with "Content-Type", value
 
+    ## Responde con un cuerpo y el `Content-Type` indicado.
+    ##
+    ## ## Memoria
+    ## El cuerpo se copia en la respuesta; `content_type` es prestado.
+    weave send_body_with_type with content_type as string, body as string into void:
+        var response as ref to transport.Response is self->response
+        calling response.set_header with "Content-Type", content_type
+        calling response.write_text with body
+        calling response.mark_sent
+
     ## Responde con texto y `Content-Type: text/plain; charset=utf-8`.
     ##
     ## ## Memoria
@@ -92,6 +107,11 @@ enchanting Context:
         calling response.write_text with body
         calling response.mark_sent
 
+    ## Código de estado actual de la respuesta.
+    weave status_code into int:
+        var response as ref to transport.Response is self->response
+        return calling response.status
+
     ## ¿El handler ya respondió?
     weave is_sent into bool:
         var response as ref to transport.Response is self->response
@@ -117,3 +137,93 @@ enchanting Context:
             set i is i + 1
         banish wanted
         return maybe none
+
+    ## Query string de la petición, ya decodificado.
+    ##
+    ## ## Memoria
+    ## Devuelve un valor propio; libéralo con `portus.query.free_query`.
+    weave queries into query_module.Query:
+        var request as ref to transport.Request is self->request
+        return calling query_module.parse_query with (calling request.query)
+
+    ## Primer valor de un parámetro del query string.
+    ##
+    ## ## Memoria
+    ## Copia propia, o `none` si no vino.
+    weave query_param with name as string into maybe string:
+        var parsed as query_module.Query is calling self.queries
+        var found as maybe string is calling query_module.query_get with parsed, name
+        calling query_module.free_query with parsed
+        return found
+
+    ## Cuerpo de la petición como texto.
+    ##
+    ## ## Memoria
+    ## Copia propia; los strings de la petición no se pueden banir.
+    weave body_text into string:
+        var request as ref to transport.Request is self->request
+        return calling request.body_text
+
+    ## Cuerpo de la petición interpretado como JSON.
+    ##
+    ## ## Retorno
+    ## El valor JSON (propio) o el error del parser. Un cuerpo vacío es un
+    ## `JsonError` de tipo `UnexpectedEof`.
+    weave body_json into result of json.JsonValue to json.JsonError:
+        var request as ref to transport.Request is self->request
+        return calling json.parse with (calling request.body_text)
+
+    ## Cuerpo `application/x-www-form-urlencoded` como pares.
+    ##
+    ## ## Memoria
+    ## Devuelve un valor propio; libéralo con `portus.query.free_query`.
+    weave body_form into query_module.Query:
+        var request as ref to transport.Request is self->request
+        return calling query_module.parse_query with (calling request.body_text)
+
+    ## Valor de una cookie de la petición.
+    ##
+    ## ## Retorno
+    ## Copia propia, o `none` si no vino.
+    weave cookie with name as string into maybe string:
+        var raw as maybe string is calling self.header with "Cookie"
+        if v as string is raw:
+            var cookies as cookie_module.Cookies is calling cookie_module.parse_cookies with v
+            var found as maybe string is calling cookie_module.cookie_get with cookies, name
+            calling cookie_module.free_cookies with cookies
+            return found
+        return maybe none
+
+    ## Añade una cookie a la respuesta con `SESSION_OPTIONS`.
+    ##
+    ## ## Memoria
+    ## El valor se copia en la respuesta.
+    weave set_cookie with name as string, value as string into void:
+        calling self.set_cookie_with with name, value, cookie_module.SESSION_OPTIONS
+
+    ## Añade una cookie a la respuesta con atributos explícitos.
+    weave set_cookie_with with name as string, value as string, options as cookie_module.CookieOptions into void:
+        var encoded as string is calling cookie_module.serialize_cookie with name, value, options
+        var response as ref to transport.Response is self->response
+        calling response.set_header with "Set-Cookie", encoded
+        banish encoded
+
+    ## Pide al navegador que borre una cookie.
+    weave delete_cookie with name as string into void:
+        var encoded as string is calling cookie_module.clear_cookie with name, "/"
+        var response as ref to transport.Response is self->response
+        calling response.set_header with "Set-Cookie", encoded
+        banish encoded
+
+    ## Responde con un valor JSON y `Content-Type: application/json`.
+    ##
+    ## ## Memoria
+    ## El texto serializado se copia en la respuesta y se libera aquí.
+    weave send_json with value as json.JsonValue into void:
+        var encoded as string is calling json.stringify with value
+        var response as ref to transport.Response is self->response
+        calling response.set_status with 200
+        calling response.set_header with "Content-Type", "application/json; charset=utf-8"
+        calling response.write_text with encoded
+        calling response.mark_sent
+        banish encoded

@@ -63,6 +63,22 @@ weave tag with data as ref to void, context as ref to portus.Context into result
     calling context.set_header with "X-Portus", "1"
     return calling portus.ok_void
 
+weave echo_json with context as ref to portus.Context into result of void to portus.HttpError:
+    let text as string is calling context.body_text
+    let parsed as result of portus.json.JsonValue to portus.json.JsonError is calling context.body_json
+    if not parsed.is_ok:
+        calling context.send_status with 400, "json invalido"
+        return calling portus.ok_void
+    calling context.send_body_with_type with "application/json; charset=utf-8", text
+    return calling portus.ok_void
+
+weave whoami with context as ref to portus.Context into result of void to portus.HttpError:
+    let sid as maybe string is calling context.cookie with "sid"
+    let shown as string is sid or else "none"
+    calling context.set_cookie with "seen", "1"
+    calling context.send_text with "sid={shown}"
+    return calling portus.ok_void
+
 weave missing with context as ref to portus.Context into result of void to portus.HttpError:
     calling context.send_status with 404, "sin ruta"
     return calling portus.ok_void
@@ -77,6 +93,11 @@ weave main into int:
     let grouped as result of void to portus.PatternError is calling api.get with "/ping", hello
     var mw as portus.Middleware is calling portus.middleware with tag
     calling portus.use with sigil of app, mw
+    let echoed as result of void to portus.PatternError is calling portus.post with sigil of app, "/echo", echo_json
+    let cookies as result of void to portus.PatternError is calling portus.get with sigil of app, "/whoami", whoami
+    calling portus.use_request_id with sigil of app
+    calling portus.use_security_headers with sigil of app
+    calling portus.use_cors with sigil of app, "https://ejemplo.example"
     calling portus.on_not_found with sigil of app, missing
     let served as result of int to string is calling portus.serve with sigil of app, $port
     let bound as int is served or:
@@ -145,5 +166,21 @@ s.close()
 PY
 )"
 [ "$resp" = "True" ] || { echo "FAIL: la segunda petición keep-alive no respondió"; exit 1; }
+
+json_body="$(curl -s --max-time 3 -X POST -H 'Content-Type: application/json' -d '{"ok":true,"n":7}' "http://127.0.0.1:$port/echo")"
+[ "$json_body" = '{"ok":true,"n":7}' ] || { echo "FAIL: eco JSON '$json_body'"; exit 1; }
+
+cookie_headers="$(curl -s -D - -o /dev/null --max-time 3 -H 'Cookie: sid=abc' "http://127.0.0.1:$port/whoami")"
+echo "$cookie_headers" | grep -qi "^set-cookie: seen=1" || { echo "FAIL: falta Set-Cookie"; exit 1; }
+cookie_body="$(curl -s --max-time 3 -H 'Cookie: sid=abc' "http://127.0.0.1:$port/whoami")"
+[ "$cookie_body" = "sid=abc" ] || { echo "FAIL: cookie leída '$cookie_body'"; exit 1; }
+
+f2_headers="$(curl -s -D - -o /dev/null --max-time 3 "http://127.0.0.1:$port/")"
+echo "$f2_headers" | grep -qi "^x-request-id: [0-9a-f]\{32\}" || { echo "FAIL: falta X-Request-Id"; exit 1; }
+echo "$f2_headers" | grep -qi "^x-content-type-options: nosniff" || { echo "FAIL: falta X-Content-Type-Options"; exit 1; }
+
+preflight="$(curl -s -D - -o /dev/null --max-time 3 -X OPTIONS -H 'Access-Control-Request-Method: POST' "http://127.0.0.1:$port/echo")"
+echo "$preflight" | head -1 | grep -q "204" || { echo "FAIL: preflight CORS debía dar 204"; exit 1; }
+echo "$preflight" | grep -qi "^access-control-allow-origin: https://ejemplo.example" || { echo "FAIL: falta Access-Control-Allow-Origin"; exit 1; }
 
 echo "OK e2e hello (puerto $port)"

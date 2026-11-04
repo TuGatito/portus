@@ -1263,6 +1263,60 @@ static PORTUS_MAYBE_UNUSED int portus_native_response_status(const struct portus
     return res->status;
 }
 
+
+/* ------------------------------------------------------------------ */
+/* Utilidades para middlewares                                         */
+/* ------------------------------------------------------------------ */
+
+/* Escribe `bytes` bytes aleatorios como hexadecimal (2*bytes chars) más el
+ * terminador en `out`. `out` debe tener espacio para 2*bytes+1.
+ * Devuelve 0 si pudo, -1 si no hay fuente de aleatoriedad. */
+static PORTUS_MAYBE_UNUSED int portus_native_random_hex(unsigned char *out, int bytes) {
+    unsigned char raw[64];
+    int i;
+    int fd;
+    if (bytes <= 0 || bytes > 64 || out == NULL) {
+        return -1;
+    }
+    fd = open("/dev/urandom", O_RDONLY);
+    if (fd < 0) {
+        return -1;
+    }
+    if (read(fd, raw, (size_t)bytes) != bytes) {
+        close(fd);
+        return -1;
+    }
+    close(fd);
+    for (i = 0; i < bytes; i++) {
+        static const char hex[] = "0123456789abcdef";
+        out[i * 2] = (unsigned char)hex[(raw[i] >> 4) & 0x0F];
+        out[i * 2 + 1] = (unsigned char)hex[raw[i] & 0x0F];
+    }
+    out[bytes * 2] = 0;
+    return 0;
+}
+
+
+/* Devuelve un identificador de petición de 32 caracteres hexadecimales en un
+ * buffer estático (se sobrescribe en cada llamada: cópialo antes de la
+ * siguiente). null si no hay fuente de aleatoriedad. Un solo hilo a la vez. */
+static PORTUS_MAYBE_UNUSED const char *portus_native_request_id(void) {
+    static char id[33];
+    if (portus_native_random_hex((unsigned char *)id, 16) != 0) {
+        return NULL;
+    }
+    return id;
+}
+
+/* Milisegundos monótonos desde un origen arbitrario. */
+static PORTUS_MAYBE_UNUSED long long portus_native_now_ms(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        return 0;
+    }
+    return (long long)ts.tv_sec * 1000LL + (long long)(ts.tv_nsec / 1000000L);
+}
+
 static PORTUS_MAYBE_UNUSED int portus_native_ping(int n) {
     return n + 1;
 }

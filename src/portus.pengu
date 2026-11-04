@@ -23,11 +23,13 @@
 ## ## Memoria
 ## `Application` es dueña de sus rutas: libérala con `portus.application.free_application`.
 ## El servidor presta la aplicación mientras corre.
+import portus.cookie as cookie_alias_module
 import portus.application as application_module
 import portus.context as context_module
 import portus.group as group_module
 import portus.error
 import portus.handler as handler_module
+import portus.middleware as middleware_module
 import portus.route as route_module
 import portus.transport as transport
 
@@ -45,6 +47,8 @@ alias Middleware as handler_module.Middleware
 alias MiddlewareFn as handler_module.MiddlewareFn
 alias AppHook as application_module.AppHook
 alias Group as group_module.Group
+alias Cookies as cookie_alias_module.Cookies
+alias CookieOptions as cookie_alias_module.CookieOptions
 
 ## Versión del paquete.
 const PORTUS_VERSION as string is "0.1.0"
@@ -156,6 +160,22 @@ weave not_found into HttpError:
 ## Crea un `HttpError` 500.
 weave internal_error into HttpError:
     return calling error.internal
+
+## Añade `X-Request-Id` aleatorio a cada respuesta.
+weave use_request_id with app as ref to Application into void:
+    return calling middleware_module.add_request_id with app
+
+## Añade las cabeceras de seguridad habituales.
+weave use_security_headers with app as ref to Application into void:
+    return calling middleware_module.add_security_headers with app
+
+## Añade CORS para `origin`.
+weave use_cors with app as ref to Application, origin as string into void:
+    return calling middleware_module.add_cors with app, origin
+
+## Añade un log de una línea por petición.
+weave use_logger with app as ref to Application into void:
+    return calling middleware_module.add_logger with app
 
 ## Ping del binding nativo (humo de instalación).
 weave ping with n as int into int:

@@ -1,0 +1,38 @@
+## Cookie de sesión y eco de JSON con portus.
+import std.spark
+import portus
+
+weave echo with context as ref to portus.Context into result of void to portus.HttpError:
+    let text as string is calling context.body_text
+    let parsed as result of portus.json.JsonValue to portus.json.JsonError is calling context.body_json
+    if not parsed.is_ok:
+        calling context.send_status with 400, "json invalido"
+        return calling portus.ok_void
+    calling context.send_body_with_type with "application/json; charset=utf-8", text
+    return calling portus.ok_void
+
+weave login with context as ref to portus.Context into result of void to portus.HttpError:
+    let user as maybe string is calling context.query_param with "user"
+    let name as string is user or else "anon"
+    calling context.set_cookie with "user", name
+    calling context.send_text with "hola {name}"
+    return calling portus.ok_void
+
+weave me with context as ref to portus.Context into result of void to portus.HttpError:
+    let saved as maybe string is calling context.cookie with "user"
+    let name as string is saved or else "anon"
+    calling context.send_text with "eres {name}"
+    return calling portus.ok_void
+
+weave main into int:
+    var app as portus.Application is calling portus.new_application
+    let a as result of void to portus.PatternError is calling portus.post with sigil of app, "/echo", echo
+    let b as result of void to portus.PatternError is calling portus.get with sigil of app, "/login", login
+    let c as result of void to portus.PatternError is calling portus.get with sigil of app, "/me", me
+    calling portus.use_request_id with sigil of app
+    calling portus.use_security_headers with sigil of app
+    let served as result of int to string is calling portus.serve with sigil of app, 3000
+    let bound as int is served or:
+        calling spark.println with "no se pudo escuchar en 3000"
+        return 1
+    return bound

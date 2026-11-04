@@ -52,6 +52,14 @@ rune Middleware:
 weave middleware with invoke as MiddlewareFn into Middleware:
     return with invoke is invoke, data is transmute 0 to ref to void
 
+## Envuelve una función de middleware con su configuración.
+##
+## ## Memoria
+## `data` es prestado: debe vivir tanto como el middleware (normalmente en la
+## arena de la aplicación).
+weave middleware_with with invoke as MiddlewareFn, data as ref to void into Middleware:
+    return with invoke is invoke, data is data
+
 ## Ejecuta un handler de ruta.
 weave invoke with handler as Handler, context as ref to Context into result of void to HttpError:
     return calling handler with context

@@ -1,10 +1,12 @@
 # Portus — Arreglos necesarios en PenguScript
 
 > Bugs del compilador que portus encontró. Todos están confirmados con una
-> reproducción mínima. Estado a 2026-11-04: **1–7 y 11 arreglados** y publicados
-> en 0.28.1–0.28.7; **3, 8, 9, 10, 12, 13, 14 y 15 abiertos** (portus usa workarounds).
+> reproducción mínima. Estado a 2026-11-04: **1–7, 11 y 12 arreglados** y
+> publicados en 0.28.1–0.28.8; **3, 8, 9, 10, 14 y 15 abiertos** (portus usa
+> workarounds); 13 resultó ser otra cara de 15 y no se reproduce con el
+> receptor en un local.
 >
-> Checkout: `/home/tugatito/Documentos/GitHub/PenguScript` (v0.28.7, `build/psc`).
+> Checkout: `/home/tugatito/Documentos/GitHub/PenguScript` (v0.28.8, `build/psc`).
 > Cada arreglo lleva su test en `tests/regress_*.sh`, su entrada en `CHANGELOG.md`
 > y su bump de versión en todos los documentos.
 
@@ -25,10 +27,11 @@
 | 9 | P1 | Bloque (`do:` / `if` multilínea) en posición de valor emite sólo la última expresión | parser+codegen (paridad) | abierto | `if c then a else b` |
 | 10 | P1 | Un `omen` algebraico no se puede usar en posición de valor | codegen/sema de omens | abierto | `rune { kind, message }` |
 | 11 | P2 | `[]` emite una temporal sin usar (`-Wunused-variable`) | `src/psc/codegen/expr.pengu` | 0.28.7 | ya no hace falta |
-| 12 | P1 | `maybe Fn` / `result of … to …` con payload de tipo función emite C inválido | `src/psc/codegen/expr.pengu` (`result_ctor`) | abierto | campo plano + flag `bool` |
-| 13 | P2 | Llamar un método a través de un campo `ref` emite `T**`; `set x.campo` sobre un `ref` | codegen (receptores) | abierto | enlazar a un local |
+| 12 | P1 | `maybe Fn` / `result of … to …` con payload de tipo función emite C inválido | `src/psc/codegen/expr.pengu` (`result_ctor`) + `ctype.pengu` | 0.28.8 | ya no hace falta |
+| 13 | P2 | Llamar un método a través de un campo `ref` emite `T**`; `set x.campo` sobre un `ref` | codegen (receptores) | no reproduce (ver 15) | enlazar a un local |
 | 14 | P1 | Un módulo llamado `router`/`routes` no emite sus weaves libres | codegen/DCE (sin reducir) | abierto | módulo `portus.group` |
 | 15 | P1 | Un nombre suelto resuelve a la función del módulo **consumidor**, no a la del importado | sema (resolución de nombres) | abierto | calificar `modulo.fn` |
+| 16 | P2 | `"{m or else \"x\"}"` imprime el texto literal, sin error | parser de interpolación | abierto | enlazar antes de interpolar |
 
 ---
 
@@ -684,3 +687,34 @@ Detectadas escribiendo los spikes; no bloquean portus, pero conviene saberlas:
   sigue usando `lib/<nombre>/` copiado. Para probar cambios locales hay que
   `rm -rf lib/<nombre>` (o `rm -rf lib` + `pengu.lock`) y volver a añadir.
   Conviene documentarlo en `docs/LIBRARIES.md`.
+
+## 16. P2 — Interpolar un `or else` dentro de `{}` imprime el texto literal
+
+**Impacto:** silencioso: el string sale con `{q or else "none"}` en vez del
+valor. Afecta a cualquier mensaje con un `maybe` sin enlazar antes.
+
+**Repro:**
+```pengu
+weave pick into int:
+    let m as maybe string is some ("ada")
+    return m or else "none"
+
+weave main into int:
+    let m as maybe string is some ("ada")
+    calling spark.println with "hola {m or else \"none\"}"   # imprime el texto tal cual
+    return 0
+```
+
+**Causa:** el parser de interpolación no acepta la gramática completa de
+expresión (`or else` con varias palabras) y, en vez de diagnosticar, deja el
+texto literal.
+
+**Workaround (portus):** enlazar primero y interpolar el binding:
+```pengu
+let shown as string is m or else "none"
+return "hola {shown}"
+```
+
+**Arreglo propuesto:** reportar `E0000` en la interpolación cuando no se puede
+parsear la expresión, o aceptar `or else` (preferible) con paréntesis
+obligatorios.

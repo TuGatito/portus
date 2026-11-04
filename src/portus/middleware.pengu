@@ -1,0 +1,114 @@
+## portus.middleware — middlewares listos para usar.
+##
+## Cada `add_*` registra un middleware en la aplicación; el orden de llamada es
+## el de registro. Todos son "de antes": se ejecutan antes de la ruta y pueden
+## cortar la petición respondiendo y marcando el contexto como enviado.
+##
+## ## Ejemplo
+## ```pengu
+## calling portus.middleware.add_request_id with sigil of app
+## calling portus.middleware.add_security_headers with sigil of app
+## calling portus.middleware.add_cors with sigil of app, "https://midominio.example"
+## ```
+##
+## ## Memoria
+## La configuración se aloja en la arena de la aplicación; no la liberes.
+import std.arena as arena_module
+import std.spark
+import portus.application as application_module
+import portus.context as context_module
+import portus.error
+import portus.handler as handler_module
+import portus.native as native_module
+import portus.text
+
+## Configuración del middleware CORS.
+rune CorsConfig:
+    ## Origen permitido (`"*"` permite cualquiera).
+    origin as string
+
+## Añade `X-Request-Id` con 16 bytes aleatorios en hexadecimal (32 chars).
+##
+## ## Memoria
+## No aloja configuración.
+weave add_request_id with app as ref to application_module.Application into void:
+    calling application_module.use with app, calling handler_module.middleware with _request_id
+
+## Middleware que pone `X-Request-Id`.
+weave _request_id with data as ref to void, context as ref to context_module.Context into result of void to HttpError:
+    var id as ref to frozen char is calling native_module.portus_native_request_id
+    if (transmute id to usize) != 0:
+        var copy as string is calling text.from_cstr with id
+        calling context.set_header with "X-Request-Id", copy
+        banish copy
+    return calling handler_module.ok_void
+
+## Añade las cabeceras de seguridad habituales.
+##
+## `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+## `Referrer-Policy: no-referrer` y `Cross-Origin-Opener-Policy: same-origin`.
+weave add_security_headers with app as ref to application_module.Application into void:
+    calling application_module.use with app, calling handler_module.middleware with _security_headers
+
+## Middleware de cabeceras de seguridad.
+weave _security_headers with data as ref to void, context as ref to context_module.Context into result of void to HttpError:
+    calling context.set_header with "X-Content-Type-Options", "nosniff"
+    calling context.set_header with "X-Frame-Options", "DENY"
+    calling context.set_header with "Referrer-Policy", "no-referrer"
+    calling context.set_header with "Cross-Origin-Opener-Policy", "same-origin"
+    return calling handler_module.ok_void
+
+antiquus _raw_cors with config as ref to CorsConfig into ref to void:
+    r"""
+return (void *)config;
+"""
+
+## Añade CORS para `origin`.
+##
+## Responde los preflight (`OPTIONS` con `Access-Control-Request-Method`) con
+## `204` y las cabeceras `Access-Control-Allow-*`.
+##
+## ## Memoria
+## `origin` se copia en la arena de la aplicación.
+weave add_cors with app as ref to application_module.Application, origin as string into void:
+    var arena as ref to arena_module.Arena is calling application_module.arena_of with app
+    var config as ref to CorsConfig is calling arena_module.arena_alloc_one of CorsConfig with arena
+    set config->origin is "{origin}"
+    calling application_module.use with app, calling handler_module.middleware_with with _cors, calling _raw_cors with config
+
+## Middleware que aplica la configuración CORS.
+weave _cors with data as ref to void, context as ref to context_module.Context into result of void to HttpError:
+    var config as ref to CorsConfig is transmute data to ref to CorsConfig
+    calling context.set_header with "Access-Control-Allow-Origin", config->origin
+    calling context.set_header with "Vary", "Origin"
+    let wants_preflight as maybe string is calling context.header with "Access-Control-Request-Method"
+    if (calling context.method) == "OPTIONS" and wants_preflight.is_present:
+        calling context.set_header with "Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS"
+        calling context.set_header with "Access-Control-Allow-Headers", "Content-Type, Authorization"
+        calling context.set_header with "Access-Control-Max-Age", "600"
+        calling context.send_status with 204, ""
+    return calling handler_module.ok_void
+
+## Registra un log de una línea por petición en `stdout`.
+##
+## Antes de la ruta imprime `-> METODO ruta`; al terminar, `<- codigo Nms`.
+weave add_logger with app as ref to application_module.Application into void:
+    calling application_module.use with app, calling handler_module.middleware with _log_before
+    calling application_module.after with app, calling handler_module.middleware with _log_after
+
+## Middleware que abre la línea de log.
+weave _log_before with data as ref to void, context as ref to context_module.Context into result of void to HttpError:
+    var line as string is "-> {calling context.method} {calling context.path}"
+    calling spark.println with line
+    banish line
+    return calling handler_module.ok_void
+
+## Finisher que cierra la línea de log con código y duración.
+weave _log_after with data as ref to void, context as ref to context_module.Context into result of void to HttpError:
+    var now as long is calling native_module.portus_native_now_ms
+    var elapsed as int is ((now - context->started_ms) to int)
+    var code as int is calling context.status_code
+    var line as string is "<- {code} {elapsed}ms"
+    calling spark.println with line
+    banish line
+    return calling handler_module.ok_void

@@ -1,0 +1,60 @@
+## portus.text — utilidades de texto compartidas por los módulos de portus.
+##
+## No es API pública: vive aquí para no duplicar el recorrido de listas de
+## strings en cada módulo.
+##
+## ## Memoria
+## `free_strings` libera cada elemento y el buffer de la lista.
+import std.scrolls
+
+## Libera una lista de strings y sus elementos.
+##
+## ## Memoria
+## Libera `items` por completo; no la uses después.
+weave free_strings with items as list of string into void:
+    var i as int is 0
+    while i < items.len:
+        banish (items at i)
+        set i is i + 1
+    banish items
+
+## Libera una lista de strings sin tocar sus elementos (los strings son
+## prestados, p. ej. una vista de la petición).
+weave free_borrowed with items as list of string into void:
+    banish items
+
+## `true` si `a` y `b` son iguales sin distinguir mayúsculas.
+##
+## ## Memoria
+## Libera las copias intermedias; `a` y `b` son prestados.
+weave equals_ignore_case with a as string, b as string into bool:
+    var left as string is calling scrolls.to_lower with a
+    var right as string is calling scrolls.to_lower with b
+    var same as bool is (calling scrolls.compare with left, right) == 0
+    banish left
+    banish right
+    return same
+
+## Declaración del runtime: copia `count` bytes y devuelve un string propio.
+declare pengu_string_from_cstr_len with data as ref to frozen char, count as int into string
+
+## Construye un string propio a partir de `count` bytes.
+##
+## ## Memoria
+## Devuelve un string propio; libéralo con `banish`.
+weave from_bytes with data as ref to frozen byte, count as int into string:
+    return calling pengu_string_from_cstr_len with (transmute data to ref to frozen char), count
+
+## Copia un C string (`\0` terminado) a un string propio.
+##
+## ## Memoria
+## Devuelve un string propio; libéralo con `banish`.
+weave from_cstr with data as ref to frozen char into string:
+    return calling pengu_string_from_cstr_len with data, (calling _cstr_len with data)
+
+## Longitud de un C string.
+weave _cstr_len with data as ref to frozen char into int:
+    var n as int is 0
+    while (data at n) != 0:
+        set n is n + 1
+    return n

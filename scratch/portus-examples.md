@@ -55,7 +55,7 @@ Leyenda: ✅ factible · 🟡 adaptado (no idéntico) · ⛔ no aplica en v1.
 | 6 | `route-map` | ⬜ | F2 | `any`, tabla de handlers |
 | 7 | `error` | ✅ hecho | F1 | `err_void`, `on_error`, `on_not_found` |
 | 8 | `error-pages` | ✅ | F2 | `on_not_found`, `send_html` |
-| 9 | `cookies` | ✅ | F2 | `set_cookie`, `cookie`, `Cookie` |
+| 9 | `cookies` | ✅ | F2 | `examples/cookies-and-json`: `set_cookie`, `cookie`, `body_json` |
 | 10 | `static-files` | ✅ | F2 | `use_static`, `StaticOptions` |
 | 11 | `downloads` | ✅ | F2 | `send_file`, `Content-Disposition` |
 | 12 | `content-negotiation` | ✅ | F2 | `Accept`, `send_*`, `Vary` |

@@ -1,0 +1,12 @@
+version = 1
+targets = ["x86_64-unknown-linux-gnu"]
+
+[[package]]
+name = "portus"
+source = "../.."
+constraint = "*"
+version = "0.1.0"
+commit = ""
+sha256 = "7752c5993a44e065f5c63e0bbdd536dcff14256924becbac42ac4e6f8416669c"
+required_by = []
+children = []

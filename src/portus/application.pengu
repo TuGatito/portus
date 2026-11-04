@@ -20,6 +20,7 @@ import std.scrolls
 import portus.context as context_module
 import portus.error as error_module
 import portus.handler as handler_module
+import portus.native as native_module
 import portus.route as route
 import portus.transport as transport
 
@@ -180,7 +181,7 @@ weave free_application with app as ref to Application into void:
 ## Presta `request` y `response`; libera el `Params` que construye.
 weave dispatch with app as ref to Application, request as ref to transport.Request, response as ref to transport.Response into void:
     var params as route.Params is calling _empty_params
-    var ctx as Context is with request is request, response is response, params is params
+    var ctx as Context is with request is request, response is response, params is params, started_ms is (calling native_module.portus_native_now_ms)
     var failure as maybe HttpError is calling _run_befores with app, sigil of ctx
     if not failure.is_present and not calling response.is_sent:
         set failure is calling _run_route with app, sigil of ctx
