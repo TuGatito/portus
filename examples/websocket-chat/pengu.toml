@@ -11,4 +11,4 @@ cc = "gcc"
 cflags = ["-Wall"]
 
 [dependencies.portus]
-path = "../.."
+path = "/home/tugatito/Documentos/GitHub/portus"

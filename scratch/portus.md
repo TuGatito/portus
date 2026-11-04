@@ -383,6 +383,31 @@ tipo subyacente).
 - `examples/auth-jwt` y `examples/session` con README y smoke test real.
 - Tests: 42 unitarios.
 
+### F6 — en curso (ejemplos completos, docs y release)
+
+- **21 ejemplos** en `examples/` que compilan todos:
+  `hello-world`, `params`, `route-separation`, `multi-router`,
+  `route-middleware`, `route-map`, `error`, `cookies-and-json`,
+  `cookie-sessions`, `session`, `auth-jwt`, `static-files`, `downloads`,
+  `file-upload`, `content-negotiation`, `vhost`, `web-service`, `search`,
+  `resource`, `online`, `websocket-chat`.
+  `./examples/run.sh` instala la dependencia si falta y compila los 21
+  (`ok` en todos); cada uno tiene su README.
+- `docs/api/` generado con `psc doc` (22 módulos de portus) y commiteado.
+- `README.md` raíz con instalación, hello world y tabla de features.
+- **Bug 21 del compilador** encontrado en esta fase (P0): `psc add` de una
+  dependencia `path` copiaba `lib/` y `build/`, y como cada ejemplo declara
+  `path = "../.."`, la copia era recursiva (`examples/downloads/lib` llegó a
+  14 GB, el repo a 28 GB, y el compilador se quedaba minutos hasta
+  `[PANIC] StringBuilder.reserve: capacity overflow`). Arreglado en
+  **0.28.9** (`copy_local` ignora `.git`, `lib` y `build`) junto con
+  `manifest.upsert`, que ahora reescribe `[dependencies.<nombre>]` en vez de
+  añadir una segunda tabla. Regresiones:
+  `tests/regress_path_dep_no_generated.sh` y
+  `tests/regress_dep_manifest_section.sh`.
+- Pendiente para cerrar F6: CHANGELOG de portus, tag `v0.1.0` y `psc doc` en
+  CI.
+
 ## 8. Estado del repositorio
 
 ```
@@ -417,8 +442,9 @@ portus/
 ├── include/
 │   ├── portus_native.h         # servidor poll(2) + llhttp, header-only
 │   └── llhttp/                 # llhttp 9.4.3 vendorizado (LICENSE, SOURCE)
+├── docs/api/                   # API generada con `psc doc` (22 módulos)
 ├── tools/vendor_llhttp.sh
-├── examples/                   # 10 ejemplos estilo Express
+├── examples/                   # 21 ejemplos estilo Express + run.sh
 ├── tests/
 │   ├── e2e_hello.sh            # gate de F0/F2 (HTTP real, cookies, SSE…)
 │   ├── e2e_ws.sh               # gate de F3 (WebSocket)

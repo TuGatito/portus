@@ -8,4 +8,4 @@ output = "exe"
 src_dir = "src"
 
 [dependencies.portus]
-path = "../.."
+path = "/home/tugatito/Documentos/GitHub/portus"

@@ -1,0 +1,20 @@
+## Enruta por `Host` (vhost) leyendo la cabecera.
+
+import portus
+
+const PORT as int is 3000
+
+weave router with context as ref to portus.Context into result of void to portus.HttpError:
+    let host as maybe string is calling context.header with "host"
+    var name as string is host or else ""
+    if calling name.starts_with with "api.":
+        calling context.send_body_with_type with "application/json", "{\"host\":\"api\"}"
+        return calling portus.ok_void
+    calling context.send_html with "<h1>sitio principal</h1>"
+    return calling portus.ok_void
+
+weave main into int:
+    var app as portus.Application is calling portus.new_application
+    let r1 as result of void to portus.PatternError is calling portus.any with sigil of app, "/*path", router
+    let served as result of int to string is calling portus.serve with sigil of app, PORT
+    return served or else 1

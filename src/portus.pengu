@@ -35,6 +35,8 @@ import portus.static_file as static_module
 import portus.compress as compress_module
 import portus.negotiation as negotiation_module
 import portus.transport as transport
+import portus.query as query_alias_module
+import portus.text as text_module
 
 alias Application as application_module.Application
 alias Context as context_module.Context
@@ -52,6 +54,11 @@ alias AppHook as application_module.AppHook
 alias Group as group_module.Group
 alias Cookies as cookie_alias_module.Cookies
 alias CookieOptions as cookie_alias_module.CookieOptions
+alias Queries as query_alias_module.Query
+
+## Copia propia de una cadena (para guardar datos que sobreviven a la petición).
+weave text_copy with value as string into string:
+    return calling text_module.copy with value
 
 ## Versión del paquete.
 const PORTUS_VERSION as string is "0.1.0"
@@ -75,6 +82,10 @@ weave err_void with failure as HttpError into result of void to HttpError:
 ## Registra una ruta `GET`.
 weave get with app as ref to Application, pattern as string, handler as Handler into result of void to PatternError:
     return calling application_module.add with app, "GET", pattern, handler
+
+## Registra una ruta `OPTIONS`.
+weave options with app as ref to Application, pattern as string, handler as Handler into result of void to PatternError:
+    return calling application_module.add with app, "OPTIONS", pattern, handler
 
 ## Registra una ruta `POST`.
 weave post with app as ref to Application, pattern as string, handler as Handler into result of void to PatternError:

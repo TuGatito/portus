@@ -3,10 +3,10 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [[package]]
 name = "portus"
-source = "../.."
+source = "/home/tugatito/Documentos/GitHub/portus"
 constraint = "*"
 version = "0.1.0"
 commit = ""
-sha256 = "bd019339d7852679ea5145473adbcb58464bba68dc5a6b9c8f8baac1dd7e6202"
+sha256 = "5bbfbc16a7f5369b43ecba9723608dfd85e3595ecedf10559ada3d4e7ab2d87a"
 required_by = []
 children = []

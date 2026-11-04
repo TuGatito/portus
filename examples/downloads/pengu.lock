@@ -1,0 +1,12 @@
+version = 1
+targets = ["x86_64-unknown-linux-gnu"]
+
+[[package]]
+name = "portus"
+source = "/home/tugatito/Documentos/GitHub/portus"
+constraint = "*"
+version = "0.1.0"
+commit = ""
+sha256 = "5ded8489d7269a69ed72e53b9abbbef682795483ed787736fff0a5e42ed1dbbb"
+required_by = []
+children = []

@@ -1,0 +1,23 @@
+## Subida de ficheros con `multipart/form-data`.
+
+import portus
+import std.scrolls
+
+const PORT as int is 3000
+
+weave upload with context as ref to portus.Context into result of void to portus.HttpError:
+    let parsed as maybe list of portus.MultipartPart is calling context.body_multipart
+    if parts as list of portus.MultipartPart is parsed:
+        defer calling portus.free_multipart with parts
+        let found as maybe portus.MultipartPart is calling portus.multipart_part with parts, "file"
+        if part as portus.MultipartPart is found:
+            var size as int is calling scrolls.len with part.data
+            calling context.send_text with "recibido {part.filename} ({size} bytes)"
+            return calling portus.ok_void
+    return calling portus.err_void with (calling portus.bad_request with "falta el campo file")
+
+weave main into int:
+    var app as portus.Application is calling portus.new_application
+    let r1 as result of void to portus.PatternError is calling portus.post with sigil of app, "/upload", upload
+    let served as result of int to string is calling portus.serve with sigil of app, PORT
+    return served or else 1

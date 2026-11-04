@@ -1,0 +1,37 @@
+## Quién está conectado: contador en memoria (sustituye a Redis del ejemplo de Express).
+
+import portus
+
+const PORT as int is 3000
+
+## Estado en memoria del proceso. `static var` sólo puede vivir dentro de un
+## weave; el estado ES el sujeto de este módulo, por eso está aquí documentado.
+weave online into ref to int:
+    static var counter as int is 0
+    return sigil of counter
+
+weave join with context as ref to portus.Context into result of void to portus.HttpError:
+    var counter as ref to int is calling online
+    set essence of counter is (essence of counter) + 1
+    calling context.send_text with "dentro ({essence of counter})"
+    return calling portus.ok_void
+
+weave leave with context as ref to portus.Context into result of void to portus.HttpError:
+    var counter as ref to int is calling online
+    if essence of counter > 0:
+        set essence of counter is (essence of counter) - 1
+    calling context.send_text with "fuera ({essence of counter})"
+    return calling portus.ok_void
+
+weave status with context as ref to portus.Context into result of void to portus.HttpError:
+    var counter as ref to int is calling online
+    calling context.send_text with "{essence of counter}"
+    return calling portus.ok_void
+
+weave main into int:
+    var app as portus.Application is calling portus.new_application
+    let r1 as result of void to portus.PatternError is calling portus.get with sigil of app, "/join", join
+    let r2 as result of void to portus.PatternError is calling portus.get with sigil of app, "/leave", leave
+    let r3 as result of void to portus.PatternError is calling portus.get with sigil of app, "/status", status
+    let served as result of int to string is calling portus.serve with sigil of app, PORT
+    return served or else 1

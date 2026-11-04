@@ -108,6 +108,34 @@ enchanting Context:
         calling response.write_text with body
         calling response.mark_sent
 
+    ## Redirige con 302 y `Location: location`.
+    weave redirect with location as string into void:
+        var response as ref to transport.Response is self->response
+        calling response.set_status with 302
+        calling response.set_header with "Location", location
+        calling response.write_text with ""
+        calling response.mark_sent
+
+    ## Redirección permanente (301).
+    weave redirect_permanent with location as string into void:
+        var response as ref to transport.Response is self->response
+        calling response.set_status with 301
+        calling response.set_header with "Location", location
+        calling response.write_text with ""
+        calling response.mark_sent
+
+    ## Responde 204 sin cuerpo.
+    weave no_content into void:
+        var response as ref to transport.Response is self->response
+        calling response.set_status with 204
+        calling response.mark_sent
+
+    ## Responde 304 sin cuerpo.
+    weave not_modified into void:
+        var response as ref to transport.Response is self->response
+        calling response.set_status with 304
+        calling response.mark_sent
+
     ## Código de estado actual de la respuesta.
     weave status_code into int:
         var response as ref to transport.Response is self->response

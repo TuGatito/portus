@@ -1,0 +1,23 @@
+## Búsqueda sobre una lista fija con `?q=`.
+
+import portus
+
+const PORT as int is 3000
+const NAMES as list of string is ["ada", "grace", "alan", "edsger"]
+
+weave find with context as ref to portus.Context into result of void to portus.HttpError:
+    let q as maybe string is calling context.query_param with "q"
+    var needle as string is q or else ""
+    var text as string is ""
+    defer banish text
+    for name in NAMES:
+        if calling name.contains with needle:
+            set text is "{text}{name} "
+    calling context.send_text with text
+    return calling portus.ok_void
+
+weave main into int:
+    var app as portus.Application is calling portus.new_application
+    let r1 as result of void to portus.PatternError is calling portus.get with sigil of app, "/search", find
+    let served as result of int to string is calling portus.serve with sigil of app, PORT
+    return served or else 1

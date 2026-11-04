@@ -1,10 +1,10 @@
 # Portus — Arreglos necesarios en PenguScript
 
 > Bugs del compilador que portus encontró. Todos están confirmados con una
-> reproducción mínima. Estado a 2026-11-04: **1–7, 11 y 12 arreglados** y
-> publicados en 0.28.1–0.28.8; **3, 8, 9, 10, 14, 15, 19 y 20 abiertos**
+> reproducción mínima. Estado a 2026-11-04: **1–7, 11, 12 y 21 arreglados** y
+> publicados en 0.28.1–0.28.9; **3, 8, 9, 10, 14, 15, 19 y 20 abiertos**
 > (portus usa workarounds); 13 resultó ser otra cara de 15 y no se reproduce
-> con el receptor en un local; 16–18, 19 y 20 son hallazgos de F3–F5.
+> con el receptor en un local; 16–20 son hallazgos de F3–F5.
 >
 > Checkout: `/home/tugatito/Documentos/GitHub/PenguScript` (v0.28.8, `build/psc`).
 > Cada arreglo lleva su test en `tests/regress_*.sh`, su entrada en `CHANGELOG.md`
@@ -36,6 +36,7 @@
 | 18 | P2 | Un `alias` en posición de retorno no acepta el tipo subyacente | sema (retornos) | abierto | devolver el tipo concreto |
 | 19 | P1 | Un `or:` tras una llamada se liga al último argumento y pasa `NULL` | parser (postfijos) | abierto | enlazar el resultado |
 | 20 | P2 | La caché de `psc build` ignora cambios en headers C | driver (caché) | abierto | `--no-cache` tras tocar headers |
+| 21 | **P0** | `psc add` de una dependencia `path` copia `lib/`/`build/` (recursión, disco lleno) y `upsert` duplica `[dependencies]` | `src/psc/pkg/source.pengu`, `src/psc/pkg/manifest.pengu` | 0.28.9 | ya no hace falta |
 
 ---
 
@@ -811,7 +812,33 @@ la clave de caché.
 
 ---
 
-## 21. Notas de ergonomía (no son bugs, pero duelen)
+## 21. P0 — `psc add` de una dependencia `path` copia `lib/` y `build/`
+
+**Impacto:** recursión exponencial y disco lleno. Un ejemplo con
+`[dependencies.portus] path = "../.."` copiaba el repo entero, incluido su
+propio `lib/portus`, que contenía otra copia del repo con ese `lib/`… Resultado:
+`examples/downloads/lib` llegó a **14 GB** y el repo a 28 GB; el compilador se
+quedaba minutos compilando (y terminaba en
+`[PANIC] StringBuilder.reserve: capacity overflow`) porque escaneaba esos
+árboles.
+
+**Repro:** repo con `examples/x` que declara `path = "../.."`; `psc add ../..`
+dentro de `examples/x`; `du -sh lib/x/examples` crece en cada `add`.
+
+**Causa:** `src/psc/pkg/source.pengu` `copy_local` copia todos los ficheros de
+`archivum.find_files src, true`, sin excluir artefactos generados.
+
+**Arreglo:** helpers `contains`/`is_ignored_rel` en `source.pengu`: una ruta
+relativa con un componente `.git`, `lib` o `build` no se copia. Así una
+dependencia `path` instala solo su código.
+
+**Test:** `tests/regress_path_dep_no_generated.sh` crea una dependencia con
+`lib/junk.txt` y `build/junk.txt`, la instala con `psc add` y comprueba que
+`lib/dep/src/dep.pengu` existe pero `lib/dep/lib` y `lib/dep/build` no.
+
+---
+
+## 22. Notas de ergonomía (no son bugs, pero duelen)
 
 Detectadas escribiendo los spikes; no bloquean portus, pero conviene saberlas:
 

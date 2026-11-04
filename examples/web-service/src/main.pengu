@@ -1,0 +1,23 @@
+## Servicio JSON sencillo con API key por cabecera.
+
+import portus
+
+const PORT as int is 3000
+const KEY as string is "secreta"
+
+weave items with context as ref to portus.Context into result of void to portus.HttpError:
+    calling context.send_body_with_type with "application/json", "[{\"id\":1,\"name\":\"uno\"},{\"id\":2,\"name\":\"dos\"}]"
+    return calling portus.ok_void
+
+weave guarded with context as ref to portus.Context into result of void to portus.HttpError:
+    let key as maybe string is calling context.header with "x-api-key"
+    if value as string is key:
+        if value == KEY:
+            return calling items with context
+    return calling portus.err_void with (calling portus.error.unauthorized)
+
+weave main into int:
+    var app as portus.Application is calling portus.new_application
+    let r1 as result of void to portus.PatternError is calling portus.get with sigil of app, "/api/items", guarded
+    let served as result of int to string is calling portus.serve with sigil of app, PORT
+    return served or else 1

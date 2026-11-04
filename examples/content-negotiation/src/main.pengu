@@ -1,0 +1,26 @@
+## Negocia el formato de la respuesta con `Accept`.
+
+import portus
+
+const PORT as int is 3000
+
+weave data with context as ref to portus.Context into result of void to portus.HttpError:
+    let chosen as maybe string is calling portus.best with context, ["application/json", "text/html", "text/plain"]
+    if kind as string is chosen:
+        if kind == "application/json":
+            calling context.send_body_with_type with "application/json", "{\"kind\":\"json\"}"
+            return calling portus.ok_void
+        if kind == "text/html":
+            calling context.send_body_with_type with "text/html; charset=utf-8", "<b>html</b>"
+            return calling portus.ok_void
+        calling context.send_text with "texto"
+        return calling portus.ok_void
+    calling context.set_status with 406
+    calling context.send_text with "no acepto nada de eso"
+    return calling portus.ok_void
+
+weave main into int:
+    var app as portus.Application is calling portus.new_application
+    let r1 as result of void to portus.PatternError is calling portus.get with sigil of app, "/data", data
+    let served as result of int to string is calling portus.serve with sigil of app, PORT
+    return served or else 1

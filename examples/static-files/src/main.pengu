@@ -1,0 +1,16 @@
+## Sirve ficheros de `./public` con ETag y Range.
+
+import portus
+
+const PORT as int is 3000
+
+weave home with context as ref to portus.Context into result of void to portus.HttpError:
+    calling context.send_html with "<h1>estaticos</h1><p><a href=\"/static/hello.txt\">hello.txt</a></p>"
+    return calling portus.ok_void
+
+weave main into int:
+    var app as portus.Application is calling portus.new_application
+    let r1 as result of void to portus.PatternError is calling portus.get with sigil of app, "/", home
+    let r2 as result of void to portus.PatternError is calling portus.mount_static with sigil of app, "/static", "./public"
+    let served as result of int to string is calling portus.serve with sigil of app, PORT
+    return served or else 1

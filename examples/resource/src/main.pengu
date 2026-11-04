@@ -1,0 +1,50 @@
+## Recurso CRUD en memoria: GET /items, POST /items, GET /items/:id.
+
+import portus
+
+const PORT as int is 3000
+
+## Estado del recurso. `static var` sólo puede vivir dentro de un weave; el
+## estado ES el sujeto de este módulo (y se pierde al reiniciar el proceso).
+weave storage into ref to list of string:
+    static var items as list of string is []
+    return sigil of items
+
+weave list_items with context as ref to portus.Context into result of void to portus.HttpError:
+    var items as ref to list of string is calling storage
+    var out as string is ""
+    for i, item in (essence of items):
+        set out is "{out}{i}:{item}\n"
+    calling context.send_text with out
+    return calling portus.ok_void
+
+weave create_item with context as ref to portus.Context into result of void to portus.HttpError:
+    let form as portus.Queries is calling context.body_form
+    let found as maybe string is calling portus.query_get with form, "name"
+    if name as string is found:
+        if name == "":
+            return calling portus.err_void with (calling portus.bad_request with "name vacio")
+        var items as ref to list of string is calling storage
+        calling items.push with (calling portus.text_copy with name)
+        calling context.send_status with 201, "creado"
+        return calling portus.ok_void
+    return calling portus.err_void with (calling portus.bad_request with "falta name")
+
+weave get_item with context as ref to portus.Context into result of void to portus.HttpError:
+    let raw as maybe string is calling context.param with "id"
+    var items as ref to list of string is calling storage
+    if wanted as string is raw:
+        for i, item in (essence of items):
+            if "{i}" == wanted:
+                calling context.send_text with item
+                return calling portus.ok_void
+        return calling portus.err_void with (calling portus.not_found)
+    return calling portus.err_void with (calling portus.not_found)
+
+weave main into int:
+    var app as portus.Application is calling portus.new_application
+    let r1 as result of void to portus.PatternError is calling portus.get with sigil of app, "/items", list_items
+    let r2 as result of void to portus.PatternError is calling portus.post with sigil of app, "/items", create_item
+    let r3 as result of void to portus.PatternError is calling portus.get with sigil of app, "/items/:id", get_item
+    let served as result of int to string is calling portus.serve with sigil of app, PORT
+    return served or else 1

@@ -1,0 +1,22 @@
+## Fuerza la descarga de un fichero con `Content-Disposition`.
+
+import std.archivum
+import portus
+
+const PORT as int is 3000
+const FILE as string is "./public/informe.txt"
+
+weave download with context as ref to portus.Context into result of void to portus.HttpError:
+    let data as maybe string is calling archivum.read_bytes with FILE
+    if body as string is data:
+        defer banish body
+        calling context.set_header with "Content-Disposition", "attachment; filename=\"informe.txt\""
+        calling context.send_body_with_type with "text/plain; charset=utf-8", body
+        return calling portus.ok_void
+    return calling portus.err_void with (calling portus.error.not_found)
+
+weave main into int:
+    var app as portus.Application is calling portus.new_application
+    let r1 as result of void to portus.PatternError is calling portus.get with sigil of app, "/download", download
+    let served as result of int to string is calling portus.serve with sigil of app, PORT
+    return served or else 1

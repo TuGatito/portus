@@ -1,0 +1,24 @@
+## Tabla de rutas: un solo handler que elige por ruta.
+
+import portus
+
+const PORT as int is 3000
+
+weave dispatch with context as ref to portus.Context into result of void to portus.HttpError:
+    var path as string is calling context.path
+    if path == "/a":
+        calling context.send_text with "ruta a"
+        return calling portus.ok_void
+    if path == "/b":
+        calling context.send_text with "ruta b"
+        return calling portus.ok_void
+    if path == "/c":
+        calling context.send_text with "ruta c"
+        return calling portus.ok_void
+    return calling portus.err_void with (calling portus.error.not_found)
+
+weave main into int:
+    var app as portus.Application is calling portus.new_application
+    let r1 as result of void to portus.PatternError is calling portus.any with sigil of app, "/*path", dispatch
+    let served as result of int to string is calling portus.serve with sigil of app, PORT
+    return served or else 1

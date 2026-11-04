@@ -107,6 +107,14 @@ weave sse with context as ref to portus.Context into result of void to portus.Ht
     let closed as bool is calling context.sse_close
     return calling portus.ok_void
 
+weave go with context as ref to portus.Context into result of void to portus.HttpError:
+    calling context.redirect with "/"
+    return calling portus.ok_void
+
+weave empty with context as ref to portus.Context into result of void to portus.HttpError:
+    calling context.no_content
+    return calling portus.ok_void
+
 weave missing with context as ref to portus.Context into result of void to portus.HttpError:
     calling context.send_status with 404, "sin ruta"
     return calling portus.ok_void
@@ -127,6 +135,8 @@ weave main into int:
     let big_route as result of void to portus.PatternError is calling portus.get with sigil of app, "/big", big
     let negotiated as result of void to portus.PatternError is calling portus.get with sigil of app, "/negotiate", negotiate
     let sse_route as result of void to portus.PatternError is calling portus.get with sigil of app, "/sse", sse
+    let go_route as result of void to portus.PatternError is calling portus.get with sigil of app, "/go", go
+    let empty_route as result of void to portus.PatternError is calling portus.get with sigil of app, "/empty", empty
     calling portus.use_compress with sigil of app
     calling portus.use_request_id with sigil of app
     calling portus.use_security_headers with sigil of app
@@ -170,6 +180,13 @@ code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:$p
 [ "$code" = "404" ] || { echo "FAIL: se esperaba 404, llegó $code"; exit 1; }
 nf="$(curl -s --max-time 3 "http://127.0.0.1:$port/nope")"
 [ "$nf" = "sin ruta" ] || { echo "FAIL: on_not_found devolvió '$nf'"; exit 1; }
+
+redir="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:$port/go")"
+[ "$redir" = "302" ] || { echo "FAIL: redirect debía dar 302, dio $redir"; exit 1; }
+loc="$(curl -s -D - -o /dev/null --max-time 3 "http://127.0.0.1:$port/go")"
+echo "$loc" | grep -qi '^location: /' || { echo "FAIL: redirect sin Location"; exit 1; }
+nc="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:$port/empty")"
+[ "$nc" = "204" ] || { echo "FAIL: no_content debía dar 204, dio $nc"; exit 1; }
 
 hdr="$(curl -s -D - -o /dev/null --max-time 3 "http://127.0.0.1:$port/")"
 echo "$hdr" | grep -qi "^X-Portus: 1" || { echo "FAIL: falta la cabecera del middleware"; exit 1; }
