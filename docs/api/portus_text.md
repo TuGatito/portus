@@ -76,3 +76,27 @@ strings en cada módulo.
 
  Longitud de un C string.
 
+### `index_of`
+
+> **index_of**(value: string, needle: string) -> int
+
+ Posición de `needle` dentro de `value`, o `-1` si no aparece.
+
+### `take_before`
+
+> **take_before**(value: string, index: int) -> string
+
+ Copia de `value` desde el principio hasta `index` (sin incluirlo).
+
+ ## Memoria
+ Devuelve una cadena nueva; libérala con `banish`.
+
+### `take_after`
+
+> **take_after**(value: string, index: int) -> string
+
+ Copia de `value` desde `index + 1` hasta el final.
+
+ ## Memoria
+ Devuelve una cadena nueva; libérala con `banish`.
+

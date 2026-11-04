@@ -70,8 +70,8 @@ Leyenda: ✅ factible · 🟡 adaptado (no idéntico) · ⛔ no aplica en v1.
 | 21 | `file-upload` (propio) | ✅ `examples/file-upload` | F5 | `body_multipart`, `multipart_part` |
 | 22 | `auth-jwt` (propio) | ✅ `examples/auth-jwt` | F5 | `jwt_sign`, `jwt_verify`, `bearer_required` |
 | 23 | `websocket-chat` (propio) | ✅ `examples/websocket-chat` | F3 | `ws_upgrade`, `Conn.send_text`, broadcast |
-| 24 | `sse-dashboard` (propio) | ⬜ pendiente | F6 | `sse_open`, `sse_send` |
-| 25 | `rest-api` (propio) | ⬜ pendiente | F6 | todo junto |
+| 24 | `sse-dashboard` (propio) | ✅ `examples/sse-dashboard` | F6 | `sse_open`, `sse_send`, `send_html` |
+| 25 | `rest-api` (propio) | ✅ `examples/rest-api` | F6 | `body_json`, `send_body_with_type`, 201/204 |
 
 ⛔ **No aplica** (y por qué):
 

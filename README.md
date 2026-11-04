@@ -92,7 +92,7 @@ src/portus.pengu        fachada pública (alias + serve)
 src/portus/*.pengu      módulos (router, contexto, middlewares, sesiones, ws…)
 include/portus_native.h servidor poll(2) + llhttp, header-only
 include/llhttp/         llhttp 9.4.3 vendorizado (MIT, ver THIRD_PARTY.md)
-examples/               21 ejemplos ejecutables
+examples/               23 ejemplos ejecutables
 tests/                  e2e de HTTP, WebSocket y seguridad
 docs/api/               API generada con `psc doc`
 scratch/                auditoría, diseño, plan y bugs del compilador

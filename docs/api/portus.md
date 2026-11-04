@@ -138,6 +138,24 @@ _Undocumented._
 
  Copia propia de una cadena (para guardar datos que sobreviven a la petición).
 
+### `text_index`
+
+> **text_index**(value: string, needle: string) -> int
+
+ Posición de `needle` en `value`, o `-1`.
+
+### `text_before`
+
+> **text_before**(value: string, index: int) -> string
+
+ Prefijo de `value` hasta `index`.
+
+### `text_after`
+
+> **text_after**(value: string, index: int) -> string
+
+ Sufijo de `value` tras `index`.
+
 ### `PORTUS_VERSION`
 
 > **PORTUS_VERSION** : string

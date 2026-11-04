@@ -1,0 +1,104 @@
+## REST API en memoria: JSON de entrada y salida.
+##
+## Demuestra `body_json` (validación con `json.parse`), `send_json`, los
+## códigos 201/404 y el id autoincremental. El estado vive en un `static var`
+## porque ESTE módulo ES el almacén (se pierde al reiniciar).
+
+import portus
+import std.json
+
+const PORT as int is 3000
+
+## Almacén: `"id|json"` por elemento.
+weave storage into ref to list of string:
+    static var items as list of string is []
+    return sigil of items
+
+## Siguiente id disponible y contador de elementos.
+weave next_id into ref to int:
+    static var next as int is 1
+    return sigil of next
+
+## Valida que `body` sea JSON (objeto, por el prefijo `{`).
+##
+## portus todavía no trae un decodificador a tipos propios: se valida con
+## `json.parse` y se responde el cuerpo original.
+weave valid_object with body as string into bool:
+    if not (calling body.starts_with with "{"):
+        return false
+    var parsed as result of json.JsonValue to json.JsonError is calling json.parse with body
+    var ok as bool is calling parsed.is_ok
+    banish parsed
+    return ok
+
+weave list_items with context as ref to portus.Context into result of void to portus.HttpError:
+    var items as ref to list of string is calling storage
+    var out as string is "["
+    var first as bool is true
+    for item in (essence of items):
+        let bar as int is calling portus.text_index with item, "|"
+        if bar >= 0:
+            if not first:
+                set out is "{out},"
+            set out is "{out}{calling portus.text_after with item, bar}"
+            set first is false
+    set out is "{out}]"
+    calling context.send_body_with_type with "application/json; charset=utf-8", out
+    return calling portus.ok_void
+
+weave create_item with context as ref to portus.Context into result of void to portus.HttpError:
+    let body as string is calling context.body_text
+    if not calling valid_object with body:
+        return calling portus.err_void with (calling portus.bad_request with "se esperaba un objeto JSON")
+    var items as ref to list of string is calling storage
+    var counter as ref to int is calling next_id
+    var id as int is essence of counter
+    set essence of counter is id + 1
+    calling items.push with "{id}|{body}"
+    calling context.set_status with 201
+    calling context.send_body_with_type with "application/json; charset=utf-8", "{\"id\":{id}}"
+    return calling portus.ok_void
+
+weave get_item with context as ref to portus.Context into result of void to portus.HttpError:
+    let raw as maybe string is calling context.param with "id"
+    if wanted as string is raw:
+        var items as ref to list of string is calling storage
+        for item in (essence of items):
+            let bar as int is calling portus.text_index with item, "|"
+            if bar >= 0:
+                let key as string is calling portus.text_before with item, bar
+                if key == wanted:
+                    calling context.send_body_with_type with "application/json; charset=utf-8", (calling portus.text_after with item, bar)
+                    return calling portus.ok_void
+    return calling portus.err_void with (calling portus.not_found)
+
+weave delete_item with context as ref to portus.Context into result of void to portus.HttpError:
+    let raw as maybe string is calling context.param with "id"
+    if wanted as string is raw:
+        var items as ref to list of string is calling storage
+        var kept as list of string is []
+        var removed as bool is false
+        for item in (essence of items):
+            let bar as int is calling portus.text_index with item, "|"
+            if bar >= 0 and (calling portus.text_before with item, bar) == wanted:
+                set removed is true
+            else:
+                calling kept.push with (calling portus.text_copy with item)
+        calling items.clear
+        for one in kept:
+            calling items.push with one
+        if removed:
+            calling context.no_content
+            return calling portus.ok_void
+    return calling portus.err_void with (calling portus.not_found)
+
+weave main into int:
+    var app as portus.Application is calling portus.new_application
+    let r1 as result of void to portus.PatternError is calling portus.get with sigil of app, "/items", list_items
+    let r2 as result of void to portus.PatternError is calling portus.post with sigil of app, "/items", create_item
+    let r3 as result of void to portus.PatternError is calling portus.get with sigil of app, "/items/:id", get_item
+    let r4 as result of void to portus.PatternError is calling portus.delete with sigil of app, "/items/:id", delete_item
+    let served as result of int to string is calling portus.serve with sigil of app, PORT
+    let bound as int is served or:
+        return 1
+    return bound

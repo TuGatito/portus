@@ -60,6 +60,18 @@ alias Queries as query_alias_module.Query
 weave text_copy with value as string into string:
     return calling text_module.copy with value
 
+## Posición de `needle` en `value`, o `-1`.
+weave text_index with value as string, needle as string into int:
+    return calling text_module.index_of with value, needle
+
+## Prefijo de `value` hasta `index`.
+weave text_before with value as string, index as int into string:
+    return calling text_module.take_before with value, index
+
+## Sufijo de `value` tras `index`.
+weave text_after with value as string, index as int into string:
+    return calling text_module.take_after with value, index
+
 ## Versión del paquete.
 const PORTUS_VERSION as string is "0.1.0"
 

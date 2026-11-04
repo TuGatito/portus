@@ -67,3 +67,21 @@ weave _cstr_len with data as ref to frozen char into int:
     while (data at n) != 0:
         set n is n + 1
     return n
+
+## Posición de `needle` dentro de `value`, o `-1` si no aparece.
+weave index_of with value as string, needle as string into int:
+    return calling scrolls.index_of with value, needle
+
+## Copia de `value` desde el principio hasta `index` (sin incluirlo).
+##
+## ## Memoria
+## Devuelve una cadena nueva; libérala con `banish`.
+weave take_before with value as string, index as int into string:
+    return calling scrolls.substring with value, 0, index
+
+## Copia de `value` desde `index + 1` hasta el final.
+##
+## ## Memoria
+## Devuelve una cadena nueva; libérala con `banish`.
+weave take_after with value as string, index as int into string:
+    return calling scrolls.substring with value, index + 1, (calling scrolls.len with value)

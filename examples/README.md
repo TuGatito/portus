@@ -44,11 +44,14 @@ arranca):
 | [`resource`](resource/) | CRUD con `body_form` | `resource` |
 | [`online`](online/) | contador de conectados en memoria | `online` (sin Redis) |
 | [`websocket-chat`](websocket-chat/) | WebSocket con broadcast | — (propio) |
+| [`sse-dashboard`](sse-dashboard/) | panel HTML con `EventSource` y `/events` | — (propio) |
+| [`rest-api`](rest-api/) | CRUD JSON: `body_json`, `send_body_with_type`, 201/204/404 | `resource` |
 
 ## Ejemplos de Express que no están
 
 - `ejs`, `markdown`, `mvc`, `view-constructor`, `view-locals`: necesitan un
   motor de plantillas que PenguScript todavía no tiene.
 - `online` con Redis: la versión de este repo guarda el estado en memoria.
-- `sse-dashboard` y `rest-api`: ejemplos propios planificados en
+- `sse-dashboard` y `rest-api` sí están (son propios, no de Express); el
+  detalle de paridad está en
   [`../scratch/portus-examples.md`](../scratch/portus-examples.md).

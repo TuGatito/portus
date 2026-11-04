@@ -385,13 +385,13 @@ tipo subyacente).
 
 ### F6 — cerrado (ejemplos completos, docs y release)
 
-- **21 ejemplos** en `examples/` que compilan todos:
+- **23 ejemplos** en `examples/` que compilan todos:
   `hello-world`, `params`, `route-separation`, `multi-router`,
   `route-middleware`, `route-map`, `error`, `cookies-and-json`,
   `cookie-sessions`, `session`, `auth-jwt`, `static-files`, `downloads`,
   `file-upload`, `content-negotiation`, `vhost`, `web-service`, `search`,
   `resource`, `online`, `websocket-chat`.
-  `./examples/run.sh` instala la dependencia si falta y compila los 21
+  `./examples/run.sh` instala la dependencia si falta y compila los 23
   (`ok` en todos); cada uno tiene su README.
 - `docs/api/` generado con `psc doc` (22 módulos de portus) y commiteado.
 - `README.md` raíz con instalación, hello world y tabla de features.
@@ -409,7 +409,7 @@ tipo subyacente).
   instalación, hello world y tabla de features.
 - Gate de la fase: 42 tests unitarios, `tests/e2e_hello.sh`,
   `tests/e2e_ws.sh` y `tests/e2e_security.sh` verdes, `./examples/run.sh` con
-  los 21 `ok`.
+  los 23 `ok`.
 
 ## 8. Estado del repositorio
 
@@ -447,7 +447,7 @@ portus/
 │   └── llhttp/                 # llhttp 9.4.3 vendorizado (LICENSE, SOURCE)
 ├── docs/api/                   # API generada con `psc doc` (22 módulos)
 ├── tools/vendor_llhttp.sh
-├── examples/                   # 21 ejemplos estilo Express + run.sh
+├── examples/                   # 23 ejemplos estilo Express + run.sh
 ├── tests/
 │   ├── e2e_hello.sh            # gate de F0/F2 (HTTP real, cookies, SSE…)
 │   ├── e2e_ws.sh               # gate de F3 (WebSocket)

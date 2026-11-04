@@ -1,0 +1,47 @@
+## Panel SSE: página HTML que se suscribe a `/events`.
+##
+## Cada conexión envía tres latidos y cierra. En un servidor real el bucle
+## viviría en un hilo aparte; portus es de un solo hilo, así que el ejemplo
+## demuestra el protocolo sin bloquear el proceso.
+
+import portus
+
+const PORT as int is 3000
+
+const PAGE as string is """<!doctype html>
+<html><head><meta charset="utf-8"><title>portus SSE</title></head>
+<body>
+<h1>latidos</h1>
+<ul id="log"></ul>
+<script>
+const source = new EventSource("/events");
+source.onmessage = (event) => {
+  const line = document.createElement("li");
+  line.textContent = event.data;
+  document.getElementById("log").appendChild(line);
+};
+source.onerror = () => source.close();
+</script>
+</body></html>"""
+
+weave index with context as ref to portus.Context into result of void to portus.HttpError:
+    calling context.send_html with PAGE
+    return calling portus.ok_void
+
+weave events with context as ref to portus.Context into result of void to portus.HttpError:
+    let opened as bool is calling context.sse_open
+    var i as int is 1
+    while i <= 3:
+        let sent as bool is calling context.sse_send with "latido", "{i}"
+        set i is i + 1
+    let closed as bool is calling context.sse_close
+    return calling portus.ok_void
+
+weave main into int:
+    var app as portus.Application is calling portus.new_application
+    let home as result of void to portus.PatternError is calling portus.get with sigil of app, "/", index
+    let stream as result of void to portus.PatternError is calling portus.get with sigil of app, "/events", events
+    let served as result of int to string is calling portus.serve with sigil of app, PORT
+    let bound as int is served or:
+        return 1
+    return bound
