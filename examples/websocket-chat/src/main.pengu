@@ -1,0 +1,78 @@
+## Chat WebSocket mínimo: cada mensaje se reenvía a todas las conexiones.
+##
+## Demuestra el patrón sin closures de portus: el estado del chat viaja en el
+## `data` del handler y las conexiones se guardan en una lista.
+import std.spark
+import portus
+
+## Estado compartido por todas las conexiones.
+rune Chat:
+    ## Conexiones vivas.
+    conns as list of ref to portus.WebSocketConn
+
+## Estado del chat. Es el sujeto del módulo: por eso vive en un `static var`
+## documentado y no se pasa por parámetro a cada ruta.
+weave chat_state into ref to Chat:
+    static var chat as Chat is with conns is []
+    return sigil of chat
+
+antiquus _raw_chat with chat as ref to Chat into ref to void:
+    r"""
+return (void *)chat;
+"""
+
+## Quita una conexión de la lista.
+weave remove_conn with chat as ref to Chat, conn as ref to portus.WebSocketConn into void:
+    var kept as list of ref to portus.WebSocketConn is []
+    var i as int is 0
+    while i < chat->conns.len:
+        let current as ref to portus.WebSocketConn is chat->conns at i
+        if current != conn:
+            calling kept.push with current
+        set i is i + 1
+    banish chat->conns
+    set chat->conns is kept
+    return
+
+## Reenvía el texto a todas las conexiones.
+weave broadcast with chat as ref to Chat, text as string into void:
+    var i as int is 0
+    while i < chat->conns.len:
+        let current as ref to portus.WebSocketConn is chat->conns at i
+        let sent as bool is calling current.send_text with text
+        set i is i + 1
+    return
+
+weave on_message with data as ref to void, conn as ref to portus.WebSocketConn, opcode as int, payload as ref to frozen byte, length as int into void:
+    var chat as ref to Chat is transmute data to ref to Chat
+    if opcode == 0:
+        calling chat->conns.push with conn
+    if opcode == 1:
+        var text as string is calling portus.ws_text with payload, length
+        calling broadcast with chat, text
+        banish text
+    if opcode == 8:
+        calling remove_conn with chat, conn
+    return
+
+weave chat_route with context as ref to portus.Context into result of void to portus.HttpError:
+    let handler as portus.WebSocketHandler is calling portus.ws_handler with on_message, (calling _raw_chat with (calling chat_state))
+    let opened as bool is calling portus.ws_upgrade with context, handler
+    if not opened:
+        return calling portus.err_void with (calling portus.bad_request with "se esperaba un websocket")
+    return calling portus.ok_void
+
+weave index with context as ref to portus.Context into result of void to portus.HttpError:
+    calling context.send_html with "<h1>chat</h1><p>Conéctate a ws://127.0.0.1:3000/chat</p>"
+    return calling portus.ok_void
+
+weave main into int:
+    var app as portus.Application is calling portus.new_application
+    defer calling portus.free_application with sigil of app
+    let home as result of void to portus.PatternError is calling portus.get with sigil of app, "/", index
+    let ws_route as result of void to portus.PatternError is calling portus.get with sigil of app, "/chat", chat_route
+    let served as result of int to string is calling portus.serve with sigil of app, 3000
+    let bound as int is served or:
+        calling spark.println with "no se pudo escuchar"
+        return 1
+    return bound

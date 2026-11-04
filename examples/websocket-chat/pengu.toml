@@ -1,0 +1,14 @@
+[project]
+name = "websocket-chat"
+version = "0.1.0"
+entry = "src/main.pengu"
+output = "exe"
+
+[build]
+src_dir = "src"
+include_dir = "include"
+cc = "gcc"
+cflags = ["-Wall"]
+
+[dependencies.portus]
+path = "../.."

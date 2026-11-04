@@ -32,7 +32,7 @@ rune Conn:
     ## Respuesta C de la que cuelga la conexión.
     _res as ref to void
 
-## Función que recibe cada mensaje (`opcode` 1 texto, 2 binario, 8 cierre).
+## Función que recibe cada mensaje: `opcode` 0 apertura, 1 texto, 2 binario, 8 cierre.
 alias MessageFn as weave with data as ref to void, conn as ref to Conn, opcode as int, payload as ref to frozen byte, length as int into void
 
 ## Handler con su estado (no hay closures: el estado va en `data`).
@@ -44,10 +44,12 @@ rune SocketHandler:
     invoke as MessageFn
     ## Estado del usuario; prestado.
     data as ref to void
+    ## Conexión estable de este socket (la crea `upgrade`).
+    conn as ref to Conn
 
 ## Construye un handler con estado.
 weave handler_with with invoke as MessageFn, data as ref to void into SocketHandler:
-    return with invoke is invoke, data is data
+    return with invoke is invoke, data is data, conn is (transmute 0 to ref to Conn)
 
 ## Texto de un mensaje (copia propia).
 weave text_of with payload as ref to frozen byte, length as int into string:
@@ -62,11 +64,18 @@ weave upgrade with context as ref to context_module.Context, handler as SocketHa
     set box->invoke is handler.invoke
     set box->data is handler.data
     var response as ref to native_module.portus_response_t is context->response->_raw
+    var conn as ref to Conn is calling memoria.alloc of Conn
+    set conn->_res is transmute response to ref to void
+    set box->conn is conn
     var ok as int is calling native_module.portus_native_ws_upgrade with response, _dispatch, (calling _raw_handler with box)
     if ok != 0:
+        banish conn
         banish box
         return false
     calling context.mark_sent
+    var empty as ref to frozen byte is (bytes of "")
+    let notify as MessageFn is handler.invoke
+    calling notify with handler.data, conn, 0, empty, 0
     return true
 
 antiquus _raw_handler with box as ref to SocketHandler into ref to void:
@@ -77,10 +86,10 @@ return (void *)box;
 ## Trampolín C -> Pengu.
 weave _dispatch with userdata as ref to void, response as ref to void, opcode as int, payload as ref to frozen byte, length as int into void:
     var box as ref to SocketHandler is transmute userdata to ref to SocketHandler
-    var conn as Conn is with _res is response
     let handle as MessageFn is box->invoke
-    calling handle with box->data, sigil of conn, opcode, payload, length
+    calling handle with box->data, box->conn, opcode, payload, length
     if opcode == 8:
+        banish box->conn
         banish box
     return
 

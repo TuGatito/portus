@@ -945,5 +945,8 @@ weave ws_upgrade with context as ref to Context, handler as WebSocketHandler int
 Nativo añadido: `portus_native_ws_upgrade`, `portus_native_ws_send` y
 `portus_native_ws_close`, más el tipo `portus_ws_fn`. El mensaje es un frame
 completo (sin fragmentación ni `permessage-deflate` en v1); `ping` se responde en
-C; el cierre con código 1000 lo inicia el C o el cliente, y el callback recibe
-`opcode == 8` para liberar su estado.
+C; el cierre con código 1000 lo inicia el C o el cliente.
+
+El callback recibe `opcode` 0 al abrir (registrar la conexión), 1 texto, 2
+binario y 8 cierre. `Conn` es estable durante toda la conexión, así que se puede
+guardar en una lista de conexiones para broadcast; se libera tras el `opcode` 8.

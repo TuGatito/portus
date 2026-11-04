@@ -311,6 +311,10 @@ F3 — **cerrado (WebSocket)**. Hecho y verificado:
   heap con `memoria.alloc` y se libera con `banish` al recibir el cierre.
 - La fachada expone `WebSocketConn`, `WebSocketHandler`, `WebSocketMessageFn`,
   `ws_handler`, `ws_text` y `ws_upgrade`.
+- Callback con `opcode` 0 al abrir, para que el usuario registre la conexión;
+  `Conn` es un bloque estable por conexión (no un wrapper temporal por mensaje).
+- Ejemplo `examples/websocket-chat`: 10 clientes simultáneos, broadcast y cierre
+  (probado con un cliente Python: 10/10 reciben el mensaje).
 - Gate: `tests/e2e_ws.sh` — proyecto temporal con `psc add <repo> --trust`,
   handshake real, comprobación del `Sec-WebSocket-Accept`, eco de texto corto y
   de 300 bytes, `ping`/`pong` y cierre → `OK e2e websocket (puerto …)`.
