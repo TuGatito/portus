@@ -42,15 +42,21 @@ cat >"$tmp/src/main.pengu" <<PENGU
 import std.spark
 import portus
 
-weave hello with request as ref to portus.Request, response as ref to portus.Response into void:
-    calling response.set_header with "Content-Type", "text/plain; charset=utf-8"
-    calling response.write_text with "hola desde portus"
-    calling response.mark_sent
+weave hello with context as ref to portus.Context into result of void to portus.HttpError:
+    calling context.send_text with "hola desde portus"
+    return calling portus.ok_void
+
+weave user with context as ref to portus.Context into result of void to portus.HttpError:
+    let name as maybe string is calling context.param with "name"
+    let who as string is name or else "anon"
+    calling context.send_text with "user {who}"
+    return calling portus.ok_void
 
 weave main into int:
-    var options as portus.ServeOptions is calling portus.default_options
-    set options.port is $port
-    let served as result of int to string is calling portus.serve with options, hello
+    var app as portus.Application is calling portus.new_application
+    let added as result of void to portus.PatternError is calling portus.get with sigil of app, "/", hello
+    let named as result of void to portus.PatternError is calling portus.get with sigil of app, "/users/:name", user
+    let served as result of int to string is calling portus.serve with sigil of app, $port
     let bound as int is served or:
         calling spark.println with "no se pudo escuchar"
         return 1
@@ -77,8 +83,12 @@ body="$(curl -sf --max-time 3 "http://127.0.0.1:$port/")" || {
     echo "FAIL: curl falló en 127.0.0.1:$port"; cat "$tmp/server.log"; exit 1; }
 [ "$body" = "hola desde portus" ] || { echo "FAIL: cuerpo '$body'"; exit 1; }
 
-code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:$port/x")"
-[ "$code" = "200" ] || { echo "FAIL: código $code (sin router, todo va al hello)"; exit 1; }
+user_body="$(curl -sf --max-time 3 "http://127.0.0.1:$port/users/ada")" || {
+    echo "FAIL: curl falló para /users/ada"; cat "$tmp/server.log"; exit 1; }
+[ "$user_body" = "user ada" ] || { echo "FAIL: parámetro de ruta '$user_body'"; exit 1; }
+
+code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:$port/nope")"
+[ "$code" = "404" ] || { echo "FAIL: se esperaba 404, llegó $code"; exit 1; }
 
 # Keep-alive: dos peticiones por la misma conexión.
 resp="$(

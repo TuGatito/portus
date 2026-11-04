@@ -1,0 +1,87 @@
+## portus.context — la petición y la respuesta de un handler.
+##
+## Es el único objeto que ve un handler. Los strings de la petición pertenecen al
+## contexto (no los banishes); lo que construyas para la respuesta sí es tuyo.
+##
+## ## Ejemplo
+## ```pengu
+## weave hello with context as ref to portus.Context into result of void to portus.HttpError:
+##     calling context.set_header with "Content-Type", "text/plain"
+##     calling context.send_text with "hola"
+##     return calling portus.ok_void
+## ```
+##
+## ## Memoria
+## El despachador crea y libera el contexto; no lo guardes.
+import portus.route as route
+import portus.transport as transport
+
+## La petición, la respuesta y lo que el despachador capturó de la ruta.
+rune Context:
+    ## Petición de solo lectura.
+    request as ref to transport.Request
+    ## Respuesta en construcción.
+    response as ref to transport.Response
+    ## Parámetros capturados por el patrón.
+    params as route.Params
+
+enchanting Context:
+    ## Valor de un parámetro de ruta.
+    ##
+    ## ## Retorno
+    ## Copia propia, o `none` si el patrón no lo capturó.
+    weave param with name as string into maybe string:
+        return calling route.get_param with self->params, name
+
+    ## Método HTTP de la petición (`GET`, `POST`, …).
+    weave method into string:
+        return calling self->request.method
+
+    ## Ruta pedida, sin query string.
+    weave path into string:
+        return calling self->request.path
+
+    ## Query string cruda (`a=1&b=2`) o `""`.
+    weave query into string:
+        return calling self->request.query
+
+    ## Fija una cabecera de la respuesta.
+    ##
+    ## ## Memoria
+    ## `name` y `value` se copian en la respuesta.
+    weave set_header with name as string, value as string into void:
+        calling self->response.set_header with name, value
+
+    ## Añade la cabecera `Content-Type`.
+    weave set_content_type with value as string into void:
+        calling self->response.set_header with "Content-Type", value
+
+    ## Responde con texto y `Content-Type: text/plain; charset=utf-8`.
+    ##
+    ## ## Memoria
+    ## El cuerpo se copia en la respuesta.
+    weave send_text with body as string into void:
+        calling self->response.set_header with "Content-Type", "text/plain; charset=utf-8"
+        calling self->response.write_text with body
+        calling self->response.mark_sent
+
+    ## Responde con HTML.
+    weave send_html with body as string into void:
+        calling self->response.set_header with "Content-Type", "text/html; charset=utf-8"
+        calling self->response.write_text with body
+        calling self->response.mark_sent
+
+    ## Fija el código de estado sin enviar cuerpo todavía.
+    weave set_status with code as int into void:
+        calling self->response.set_status with code
+
+    ## Responde con un código y un cuerpo de texto.
+    weave send_status with code as int, body as string into void:
+        calling self->response.set_status with code
+        calling self->response.set_header with "Content-Type", "text/plain; charset=utf-8"
+        calling self->response.write_text with body
+        calling self->response.mark_sent
+
+    ## ¿El handler ya respondió?
+    weave is_sent into bool:
+        return calling self->response.is_sent

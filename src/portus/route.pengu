@@ -1,0 +1,281 @@
+## portus.route — patrones de ruta y sus parámetros.
+##
+## Un patrón es una secuencia de segmentos separados por `/`. Cada segmento es
+## literal (`/users`), parámetro (`/users/:id`) o comodín (`/files/*path`).
+## Se compara por especificidad: literal > parámetro > comodín.
+##
+## ## Ejemplo
+## ```pengu
+## var compiled as result of Pattern to PatternError is calling route.compile with "/users/:id"
+## var pattern as Pattern is compiled or:
+##     return 1
+## var found as maybe Params is calling route.match_pattern with pattern, "/users/42"
+## ```
+##
+## ## Memoria
+## `compile` devuelve un `Pattern` dueño de sus segmentos: libéralo con
+## `free_pattern`. `match_pattern` devuelve `Params` dueño de sus cadenas:
+## libéralo con `free_params`.
+import std.scrolls
+
+## Tipo de un segmento del patrón.
+omen SegmentKind:
+    ## Texto exacto.
+    Literal
+    ## `:nombre`: captura un segmento.
+    Param
+    ## `*nombre`: captura el resto de la ruta (puede estar vacío).
+    Wildcard
+
+## Un segmento ya compilado.
+rune Segment:
+    ## Cómo se compara.
+    kind as SegmentKind
+    ## Texto literal o nombre del parámetro.
+    text as string
+
+## Un patrón compilado.
+rune Pattern:
+    ## Segmentos en orden.
+    segments as list of Segment
+    ## Mayor es más específico.
+    score as int
+
+## Categoría de un patrón inválido.
+omen PatternErrorKind:
+    ## El patrón está vacío.
+    Empty
+    ## Hay más parámetros que el máximo admitido.
+    TooManyParams
+    ## El mismo nombre de parámetro aparece dos veces.
+    DuplicateParam
+    ## Un comodín no es el último segmento.
+    WildcardNotLast
+
+## Por qué un patrón no se pudo compilar.
+rune PatternError derive Par:
+    ## Qué está mal.
+    kind as PatternErrorKind
+    ## Explicación para el programador.
+    message as string
+
+## Patrón vacío.
+weave _empty_error into PatternError:
+    return with kind is PatternErrorKind.Empty, message is "the pattern is empty"
+
+## Demasiados parámetros.
+weave _too_many with count as int into PatternError:
+    return with kind is PatternErrorKind.TooManyParams, message is "the pattern has {count} parameters (max {MAX_PARAMS})"
+
+## Nombre de parámetro repetido.
+weave _duplicate with name as string into PatternError:
+    return with kind is PatternErrorKind.DuplicateParam, message is "duplicate parameter '{name}'"
+
+## Comodín que no es el último segmento.
+weave _wildcard_last into PatternError:
+    return with kind is PatternErrorKind.WildcardNotLast, message is "a wildcard must be the last segment"
+
+## Máximo de parámetros por ruta.
+const MAX_PARAMS as int is 32
+
+## Copia propia de una cadena.
+weave _copy with text as string into string:
+    return calling scrolls.substring with text, 0, (calling scrolls.len with text)
+
+## Compila un patrón.
+##
+## Acepta con o sin `/` inicial; los segmentos vacíos se ignoran.
+##
+## ## Retorno
+## `Pattern` dueño de sus cadenas, o el motivo del fallo.
+weave compile with pattern as string into result of Pattern to PatternError:
+    var text as string is calling scrolls.trim with pattern
+    var leading as int is 0
+    while leading < text.len:
+        if (calling scrolls.char_at with text, leading) != "/":
+            break
+        set leading is leading + 1
+    if leading > 0:
+        set text is calling scrolls.substring with text, leading, (calling scrolls.len with text)
+    if text == "":
+        return calling ok_of with (with segments is [], score is 0)
+    var parts as list of string is calling scrolls.split with text, "/"
+    var segments as list of Segment is []
+    var score as int is 0
+    var params as int is 0
+    var too_many as bool is false
+    var duplicate as string is ""
+    var wildcard_mid as bool is false
+    var i as int is 0
+    while i < parts.len:
+        var part as string is (parts at i)
+        if part != "":
+            var kind as SegmentKind is SegmentKind.Literal
+            var name as string is part
+            if calling scrolls.starts_with with part, ":":
+                set kind is SegmentKind.Param
+                set name is calling scrolls.substring with part, 1, (calling scrolls.len with part)
+                set params is params + 1
+                set score is score + 10
+                if params > MAX_PARAMS:
+                    set too_many is true
+                if calling _has_name with segments, name:
+                    set duplicate is calling _copy with name
+            else if calling scrolls.starts_with with part, "*":
+                set kind is SegmentKind.Wildcard
+                set name is calling scrolls.substring with part, 1, (calling scrolls.len with part)
+                set score is score - 100
+                if i + 1 < parts.len:
+                    set wildcard_mid is true
+            else:
+                set score is score + 1000
+            var segment as Segment is with kind is kind, text is name
+            calling segments.push with segment
+        set i is i + 1
+    banish parts
+    if too_many:
+        calling free_segments with segments
+        var many as PatternError is calling _too_many with params
+        return calling err_of with many
+    if duplicate != "":
+        calling free_segments with segments
+        var failure as PatternError is calling _duplicate with duplicate
+        banish duplicate
+        return calling err_of with failure
+    if wildcard_mid:
+        calling free_segments with segments
+        return calling err_of with (calling _wildcard_last)
+    return calling ok_of with with segments is segments, score is score
+
+## ¿Algún segmento ya usa este nombre?
+weave _has_name with segments as list of Segment, name as string into bool:
+    var i as int is 0
+    while i < segments.len:
+        var segment as Segment is (segments at i)
+        if segment.text == name:
+            return true
+        set i is i + 1
+    return false
+
+## Libera una lista de cadenas propias.
+weave free_strings with items as list of string into void:
+    var i as int is 0
+    while i < items.len:
+        var item as string is (items at i)
+        banish item
+        set i is i + 1
+    banish items
+
+## Libera los segmentos y sus cadenas.
+weave free_segments with segments as list of Segment into void:
+    var i as int is 0
+    while i < segments.len:
+        var segment as Segment is (segments at i)
+        banish segment.text
+        set i is i + 1
+    banish segments
+
+## Libera un patrón compilado.
+weave free_pattern with pattern as Pattern into void:
+    calling free_segments with pattern.segments
+
+## Parámetros capturados de una petición.
+rune Params:
+    ## Nombres en el orden del patrón.
+    names as list of string
+    ## Valores en el mismo orden.
+    values as list of string
+
+## Libera los parámetros y sus cadenas.
+weave free_params with params as Params into void:
+    calling free_strings with params.names
+    calling free_strings with params.values
+
+## Busca un parámetro por nombre.
+##
+## ## Retorno
+## Copia propia del valor, o `none` si no está.
+weave get_param with params as Params, name as string into maybe string:
+    var i as int is 0
+    var found as bool is false
+    var index as int is 0
+    while i < params.names.len:
+        if (params.names at i) == name:
+            set found is true
+            set index is i
+            set i is params.names.len
+        else:
+            set i is i + 1
+    if not found:
+        return maybe none
+    return some (calling _copy with (params.values at index))
+
+## Parte una ruta en segmentos no vacíos.
+weave _path_parts with path as string into list of string:
+    var text as string is path
+    var leading as int is 0
+    while leading < text.len:
+        if (calling scrolls.char_at with text, leading) != "/":
+            break
+        set leading is leading + 1
+    if leading > 0:
+        set text is calling scrolls.substring with text, leading, (calling scrolls.len with text)
+    var raw as list of string is calling scrolls.split with text, "/"
+    var clean as list of string is []
+    var i as int is 0
+    while i < raw.len:
+        var part as string is (raw at i)
+        if part != "":
+            calling clean.push with part
+        set i is i + 1
+    banish raw
+    return clean
+
+## Compara un patrón con una ruta.
+##
+## ## Retorno
+## `Params` propio (aunque esté vacío) cuando coincide, `none` cuando no.
+weave match_pattern with pattern as Pattern, path as string into maybe Params:
+    var clean as list of string is calling _path_parts with path
+    var names as list of string is []
+    var values as list of string is []
+    var matched as bool is true
+    var si as int is 0
+    var pi as int is 0
+    while si < pattern.segments.len and matched:
+        var segment as Segment is (pattern.segments at si)
+        if segment.kind == SegmentKind.Wildcard:
+            var rest as string is calling _copy with ""
+            while pi < clean.len:
+                if rest == "":
+                    banish rest
+                    set rest is calling _copy with (clean at pi)
+                else:
+                    set rest is "{rest}/{(clean at pi)}"
+                set pi is pi + 1
+            calling names.push with calling _copy with segment.text
+            calling values.push with rest
+            set si is si + 1
+        else if pi >= clean.len:
+            set matched is false
+        else:
+            var piece as string is (clean at pi)
+            if segment.kind == SegmentKind.Literal:
+                if piece != segment.text:
+                    set matched is false
+                else:
+                    set pi is pi + 1
+            else:
+                calling names.push with calling _copy with segment.text
+                calling values.push with calling _copy with piece
+                set pi is pi + 1
+            set si is si + 1
+    if matched and pi < clean.len:
+        set matched is false
+    calling free_strings with clean
+    if not matched:
+        calling free_strings with names
+        calling free_strings with values
+        return maybe none
+    var found as Params is with names is names, values is values
+    return some found

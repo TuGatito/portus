@@ -144,6 +144,10 @@ enchanting Response:
     weave status into int:
         return calling native.portus_native_response_status with self->_raw
 
+    ## ¿El handler ya llamó a `mark_sent`?
+    weave is_sent into bool:
+        return self->_sent
+
 ## Opciones de arranque del servidor.
 rune ServeOptions:
     host as string
@@ -185,6 +189,32 @@ weave serve_loop with options as ServeOptions, handler as weave with request as 
     # scratch/portus-compiler-fixes.md). Con `then`/`else` es una expresión.
     let keep as int is if options.keep_alive then 1 else 0
     let rc as int is calling native.portus_native_serve with bytes of options.host, options.port, options.max_connections, options.max_header_bytes, options.max_body_bytes, options.idle_timeout_ms, keep, _bridge, sigil of bridge, sigil of bound
+    if rc != 0:
+        let message as string is calling _take_cstr with calling native.portus_native_last_error
+        return calling err_of with message
+    return calling ok_of with bound
+
+## Puente para handlers que necesitan un `data` propio (la aplicación).
+rune _BridgeData:
+    handler as weave with data as ref to void, request as ref to Request, response as ref to Response into void
+    data as ref to void
+
+## Puente C → PenguScript con `data`: lo usa el despachador.
+weave _bridge_data with userdata as ref to void, request as ref to void, response as ref to void into void:
+    let state as ref to _BridgeData is transmute userdata to ref to _BridgeData
+    var req as Request is with _raw is transmute request to ref to native.portus_request_t
+    var res as Response is with _raw is transmute response to ref to native.portus_response_t, _sent is false
+    calling state->handler with state->data, sigil of req, sigil of res
+
+## Igual que `serve_loop`, pero el handler recibe un `data` opaco.
+##
+## ## Memoria
+## `data` debe seguir vivo mientras el servidor corre (el bucle bloquea).
+weave serve_loop_data with options as ServeOptions, handler as weave with data as ref to void, request as ref to Request, response as ref to Response into void, data as ref to void into result of int to string:
+    var bridge as _BridgeData is with handler is handler, data is data
+    var bound as int is 0
+    let keep as int is if options.keep_alive then 1 else 0
+    let rc as int is calling native.portus_native_serve with bytes of options.host, options.port, options.max_connections, options.max_header_bytes, options.max_body_bytes, options.idle_timeout_ms, keep, _bridge_data, sigil of bridge, sigil of bound
     if rc != 0:
         let message as string is calling _take_cstr with calling native.portus_native_last_error
         return calling err_of with message

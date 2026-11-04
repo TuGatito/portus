@@ -1,11 +1,10 @@
 # Portus — Arreglos necesarios en PenguScript
 
 > Bugs del compilador que portus encontró. Todos están confirmados con una
-> reproducción mínima. Estado a 2026-11-04: **1–5 arreglados** y publicados en
-> 0.28.1–0.28.4; **6 arreglado** en 0.28.5; **7 arreglado** en 0.28.6;
-> **8 pendiente** (workaround aplicado en portus).
+> reproducción mínima. Estado a 2026-11-04: **1–7 y 11 arreglados** y publicados
+> en 0.28.1–0.28.7; **3, 8, 9 y 10 abiertos** (portus usa workarounds).
 >
-> Checkout: `/home/tugatito/Documentos/GitHub/PenguScript` (v0.28.6, `build/psc`).
+> Checkout: `/home/tugatito/Documentos/GitHub/PenguScript` (v0.28.7, `build/psc`).
 > Cada arreglo lleva su test en `tests/regress_*.sh`, su entrada en `CHANGELOG.md`
 > y su bump de versión en todos los documentos.
 
@@ -24,6 +23,8 @@
 | 7 | P1 | `ref to Alias` no resuelve métodos del tipo aliaseado | `src/psc/sema/infer/core.pengu` | 0.28.6 | ya no hace falta |
 | 8 | P1 | `padre.hijo.fn` desde el módulo `padre` llama a la `fn` local | sema (resolución de llamadas) | abierto | renombrar la función |
 | 9 | P1 | Bloque (`do:` / `if` multilínea) en posición de valor emite sólo la última expresión | parser+codegen (paridad) | abierto | `if c then a else b` |
+| 10 | P1 | Un `omen` algebraico no se puede usar en posición de valor | codegen/sema de omens | abierto | `rune { kind, message }` |
+| 11 | P2 | `[]` emite una temporal sin usar (`-Wunused-variable`) | `src/psc/codegen/expr.pengu` | 0.28.7 | ya no hace falta |
 
 ---
 
@@ -385,7 +386,86 @@ implemente (no se añade uno que congele el comportamiento actual).
 
 ---
 
-## 10. Cómo se arreglan (proceso)
+## 10. P1 — Un `omen` algebraico no se puede usar en posición de valor
+
+**Impacto:** obliga a diseñar los errores como `rune { kind, … }` en vez de como
+unión etiquetada. portus tuvo que rehacer `HttpError` y `PatternError` por esto.
+
+**Repro A (variante sin payload como valor):**
+
+```pengu
+omen E:
+    Empty
+    Many with count as int
+
+weave f into result of int to E:
+    return calling err_of with E.Empty
+```
+
+C generado: `E _p = E_Empty;` — asignar la constante del enum a la estructura
+`E` no compila (`inicializador no válido`). La forma correcta sería
+`(E){.tag = E_Empty}`.
+
+**Repro B (variante con payload en un local):**
+
+```pengu
+var e as E is with Many is with count is 3
+```
+
+C generado: `E e = (E){.Many = (E){.count = 3}};` — el compuesto interno usa el
+tipo del omen en vez del tipo del payload (`E_Many`) y el externo no lleva
+`.tag`/`.data`. gcc: "no tiene un miembro llamado 'Many'".
+
+**Repro C (`judge` sobre el omen algebraico):**
+
+```pengu
+return judge e:
+    when Empty -> 404
+    when Many -> 500
+```
+
+C generado: `switch ((int64_t)(e)) { case Empty: … }` — usa el nombre de la
+variante como etiqueta (no existe) y convierte la estructura a entero. Sólo
+funciona el `judge` sobre omens numéricos o de string.
+
+**Lo que sí funciona:** la expresión `with V is with campo is valor` **como
+argumento directo** de una función cuyo parámetro es el omen (`respond_error(res,
+(with V is with x is y))`) emite el literal correcto
+`(E){.tag = E_V, .data.V = {.x = y}}`.
+
+**Workaround (aplicado):** errores como `rune HttpError { kind as HttpErrorKind,
+message as string }` con un `omen` **numérico** para la categoría, y constructores
+(`not_found`, `bad_request(msg)`, …). Es el patrón de `std.json.JsonError`, así
+que además es idiomático.
+
+**Estado:** abierto (sema+codegen). Arreglo: `codegen/expr.pengu` debe emitir
+`(T){.tag = T_V}` para variantes sin payload y `(T){.tag = T_V, .data.V = …}`
+para las que lo llevan en **todos** los contextos; el `judge` debe bajar a
+`switch (v.tag)` con las constantes `T_V`.
+
+---
+
+## 11. P2 — Lista vacía `[]` emite una variable temporal sin usar
+
+**Impacto:** `-Wunused-variable` en cada build del consumidor que use `-Wall`
+(y un fallo con `-Werror`). Cero riesgo, arreglo trivial.
+
+**Repro:** `var xs as list of int is []` genera
+`PenguList xs = __extension__(({ PenguList _ll = pengu_list_new(sizeof(int32_t), 0); int32_t _le; _ll; }));`
+— `_le` no se usa nunca.
+
+**Arreglo (aplicado en 0.28.7):** en `src/psc/codegen/expr.pengu`, emitir la
+variable de elemento sólo cuando `n > 0`, en los dos constructores de lista
+(`list_literal_expr` y la ruta de `list_init_expr`).
+
+**Regresión (0.28.7):** `tests/regress_empty_list.sh` compila con
+`cflags = ["-Wall", "-Werror"]` un proyecto que declara `[]` y hace `push`;
+antes fallaba con `-Wunused-variable`, ahora imprime `1`. Verificado también
+que portus (que usa `[]` en varios sitios) compila sin avisos.
+
+---
+
+## 12. Cómo se arreglan (proceso)
 
 1. Rama por bug en el checkout de PenguScript:
    `fix/deps-derive-name`, `fix/alias-fn-call`, `fix/generic-forward`,
@@ -417,7 +497,7 @@ implemente (no se añade uno que congele el comportamiento actual).
 
 ---
 
-## 11. Notas de ergonomía (no son bugs, pero duelen)
+## 13. Notas de ergonomía (no son bugs, pero duelen)
 
 Detectadas escribiendo los spikes; no bloquean portus, pero conviene saberlas:
 
@@ -430,3 +510,12 @@ Detectadas escribiendo los spikes; no bloquean portus, pero conviene saberlas:
 - El literal de lista vacía necesita tipo: `let xs as list of Handler is []`.
 - Un literal de runa genérica necesita una variable tipada intermedia.
 - `io.println` no existe; `io.write_stdout` sí (devuelve `bool`).
+- Convertir un `ref to T` a `ref to void` con `transmute x to ref to void`
+  emite `(void *)&x` (la dirección de la variable puntero), no el valor del
+  puntero. Para el puente C de portus hizo falta un `antiquus` de una línea:
+  `return (void *)app;`. Síntoma típico: ASan reporta `stack-buffer-overflow`
+  leyendo dentro del marco del que pasó el puntero.
+- `psc add <ruta>` **no refresca** una dependencia de tipo `path` ya instalada:
+  sigue usando `lib/<nombre>/` copiado. Para probar cambios locales hay que
+  `rm -rf lib/<nombre>` (o `rm -rf lib` + `pengu.lock`) y volver a añadir.
+  Conviene documentarlo en `docs/LIBRARIES.md`.

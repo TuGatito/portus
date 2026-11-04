@@ -1,0 +1,30 @@
+## portus.handler — la firma de un handler.
+##
+## Un handler recibe el contexto de la petición y devuelve `ok` si ya respondió
+## o `err` con el fallo que portus debe convertir en respuesta de error. No hay
+## `next()` ni closures: la composición se hace con la cadena de la aplicación.
+##
+## ## Ejemplo
+## ```pengu
+## weave index with context as ref to portus.Context into result of void to portus.HttpError:
+##     calling context.send_text with "hola"
+##     return calling portus.ok_void
+## ```
+##
+## ## Memoria
+## El contexto lo presta el despachador: no lo guardes ni lo banishes.
+import portus.context as context_module
+import portus.error
+
+alias Context as context_module.Context
+
+## Firma de un handler de ruta o de middleware.
+alias Handler as weave with context as ref to Context into result of void to HttpError
+
+## `result of void to HttpError` con éxito; azúcar para no escribir `ok_of`.
+weave ok_void into result of void to HttpError:
+    return calling ok_of with 0
+
+## `result of void to HttpError` con fallo.
+weave err_void with failure as HttpError into result of void to HttpError:
+    return calling err_of with failure

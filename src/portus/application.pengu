@@ -1,0 +1,170 @@
+## portus.application — la aplicación: rutas, despacho y respuesta de errores.
+##
+## Una `Application` guarda rutas (método + patrón + handler) ordenadas por
+## especificidad. El despacho busca la primera ruta cuyo método y ruta encajen,
+## construye el `Context` y llama al handler. Si el handler devuelve un
+## `HttpError`, o no hay ruta, la aplicación genera la respuesta de error.
+##
+## ## Ejemplo
+## ```pengu
+## var app as portus.Application is calling portus.new_application
+## calling portus.get with sigil of app, "/", hello
+## let served as result of int to string is calling portus.serve with sigil of app, 3000
+## ```
+##
+## ## Memoria
+## `free_application` libera las rutas (no los handlers, que son código).
+import portus.context as context_module
+import portus.error
+import portus.handler as handler_module
+import portus.route as route
+import portus.transport as transport
+
+alias Context as context_module.Context
+alias Handler as handler_module.Handler
+
+## Una ruta registrada.
+rune RouteEntry:
+    ## Método HTTP, o `"*"` para cualquiera.
+    method as string
+    ## Patrón compilado.
+    pattern as route.Pattern
+    ## Qué responde.
+    handler as Handler
+    ## Especificidad del patrón (mayor gana).
+    score as int
+
+## La aplicación completa.
+rune Application:
+    ## Rutas ordenadas de más a menos específica.
+    _routes as list of RouteEntry
+
+## Crea una aplicación vacía.
+weave new_application into Application:
+    return with _routes is []
+
+## Cuántas rutas hay registradas.
+weave route_count with app as ref to Application into int:
+    return app->_routes.len
+
+## Registra una ruta.
+##
+## `method` es `"GET"`, `"POST"`, … o `"*"`. El patrón se compila aquí; un
+## patrón inválido es un error de programación y se devuelve como valor.
+##
+## ## Memoria
+## La ruta guarda el `Pattern` compilado; el handler es código, no se copia.
+weave add with app as ref to Application, method as string, pattern as string, handler as Handler into result of void to route.PatternError:
+    var compiled as result of route.Pattern to route.PatternError is calling route.compile with pattern
+    var pat as route.Pattern is compiled or:
+        return calling err_of with error
+    var entry as RouteEntry is with method is method, pattern is pat, handler is handler, score is pat.score
+    calling app->_routes.push with entry
+    calling _sort_last with app
+    return calling ok_of with 0
+
+## Reubica la última ruta en su sitio por especificidad.
+weave _sort_last with app as ref to Application into void:
+    var i as int is app->_routes.len - 1
+    while i > 0:
+        var previous as RouteEntry is (app->_routes at (i - 1))
+        var current as RouteEntry is (app->_routes at i)
+        if previous.score >= current.score:
+            return
+        set app->_routes at (i - 1) is current
+        set app->_routes at i is previous
+        set i is i - 1
+
+## Libera las rutas y sus patrones. No libera el código de los handlers.
+weave free_application with app as ref to Application into void:
+    var i as int is 0
+    while i < app->_routes.len:
+        var entry as RouteEntry is (app->_routes at i)
+        calling route.free_pattern with entry.pattern
+        set i is i + 1
+    banish app->_routes
+
+## Despacha una petición ya parseada.
+##
+## ## Memoria
+## Presta `request` y `response`; libera el `Params` que construye.
+weave dispatch with app as ref to Application, request as ref to transport.Request, response as ref to transport.Response into void:
+    var method as string is calling request.method
+    var path as string is calling request.path
+    var allowed as list of string is []
+    var i as int is 0
+    while i < app->_routes.len:
+        var entry as RouteEntry is (app->_routes at i)
+        var found as maybe route.Params is calling route.match_pattern with entry.pattern, path
+        if found.is_present:
+            var params as route.Params is found.value
+            if entry.method == method or entry.method == "*":
+                calling _run_handler with request, response, params, entry.handler
+                calling route.free_params with params
+                calling route.free_strings with allowed
+                return
+            calling route.free_params with params
+            calling allowed.push with calling route._copy with entry.method
+        set i is i + 1
+    if allowed.len > 0:
+        var allow as string is calling _join_methods with allowed
+        calling route.free_strings with allowed
+        calling respond_error with response, (calling method_not_allowed with allow)
+        return
+    calling respond_error with response, (calling not_found)
+
+## Junta métodos permitidos en el valor de `Allow`.
+weave _join_methods with methods as list of string into string:
+    var out as string is ""
+    var i as int is 0
+    while i < methods.len:
+        if out == "":
+            set out is calling route._copy with (methods at i)
+        else:
+            set out is "{out}, {(methods at i)}"
+        set i is i + 1
+    return out
+
+## Ejecuta el handler y traduce su resultado a una respuesta.
+weave _run_handler with request as ref to transport.Request, response as ref to transport.Response, params as route.Params, handler as Handler into void:
+    var ctx as Context is with request is request, response is response, params is params
+    var outcome as result of void to HttpError is calling handler with sigil of ctx
+    if outcome.is_ok:
+        if not calling response.is_sent:
+            calling respond_error with response, (calling internal)
+        return
+    var failure as HttpError is outcome.error
+    if calling response.is_sent:
+        return
+    calling respond_error with response, failure
+
+## Escribe la respuesta de error (a menos que ya se haya enviado algo).
+##
+## ## Memoria
+## El cuerpo se copia en la respuesta.
+weave respond_error with response as ref to transport.Response, failure as HttpError into void:
+    var status as int is calling status_of with failure
+    var message as string is calling message_of with failure
+    calling response.set_status with status
+    calling response.set_header with "Content-Type", "text/plain; charset=utf-8"
+    calling response.write_text with message
+    calling response.mark_sent
+
+## Devuelve el puntero de la aplicación como `ref to void` sin tomar la dirección
+## del parámetro (el código generado para una conversión implícita usaría `&app`).
+antiquus _as_raw_context with app as ref to Application into ref to void:
+    r"""
+return (void *)app;
+"""
+
+## Arranca el servidor con la aplicación como despachador y unas opciones dadas.
+##
+## ## Memoria
+## La aplicación debe vivir mientras el servidor corre (esta llamada bloquea).
+weave serve_with with app as ref to Application, options as transport.ServeOptions into result of int to string:
+    return calling transport.serve_loop_data with options, _serve_bridge, calling _as_raw_context with app
+
+## Puente con `data`: reenvía al despachador de la aplicación.
+weave _serve_bridge with data as ref to void, request as ref to transport.Request, response as ref to transport.Response into void:
+    let app as ref to Application is transmute data to ref to Application
+    calling dispatch with app, request, response

@@ -1,0 +1,101 @@
+## portus.error — fallos HTTP como valores.
+##
+## Un handler devuelve `result of void to HttpError`: `ok` cuando ya escribió la
+## respuesta, `err` cuando quiere que portus genere la página de error. No se
+## usa `panic` para datos del usuario.
+##
+## El error es un `rune` con una categoría (`HttpErrorKind`) y un mensaje: así
+## el despachador decide el código de estado sin inspeccionar texto.
+##
+## ## Ejemplo
+## ```pengu
+## weave show with context as ref to portus.Context into result of void to portus.HttpError:
+##     calling context.send_text with "hola"
+##     return calling portus.ok_void
+## ```
+omen HttpErrorKind:
+    ## La petición está mal formada o viola el contrato de la ruta.
+    BadRequest
+    ## Falta autenticación.
+    Unauthorized
+    ## Hay identidad pero no permiso.
+    Forbidden
+    ## La ruta no existe.
+    NotFound
+    ## La ruta existe, el método no.
+    MethodNotAllowed
+    ## Choque con el estado actual (p. ej. un duplicado).
+    Conflict
+    ## El cuerpo supera `Config.max_body_bytes`.
+    PayloadTooLarge
+    ## `Content-Type` no es el que la ruta acepta.
+    UnsupportedMediaType
+    ## Límite de tasa alcanzado.
+    TooManyRequests
+    ## Fallo del servidor; portus no expone el detalle al cliente.
+    Internal
+
+## Un fallo HTTP con su categoría y un mensaje para el cliente.
+rune HttpError derive Par:
+    ## Qué salió mal.
+    kind as HttpErrorKind
+    ## Texto que verá el cliente (genérico para `Internal`).
+    message as string
+
+## Error 400 con un mensaje concreto.
+weave bad_request with message as string into HttpError:
+    return with kind is HttpErrorKind.BadRequest, message is message
+
+## Error 401.
+weave unauthorized into HttpError:
+    return with kind is HttpErrorKind.Unauthorized, message is "unauthorized"
+
+## Error 403.
+weave forbidden into HttpError:
+    return with kind is HttpErrorKind.Forbidden, message is "forbidden"
+
+## Error 404.
+weave not_found into HttpError:
+    return with kind is HttpErrorKind.NotFound, message is "not found"
+
+## Error 405 con la cabecera `Allow` ya formateada.
+weave method_not_allowed with allow as string into HttpError:
+    return with kind is HttpErrorKind.MethodNotAllowed, message is "method not allowed (allow: {allow})"
+
+## Error 409 con un mensaje concreto.
+weave conflict with message as string into HttpError:
+    return with kind is HttpErrorKind.Conflict, message is message
+
+## Error 413.
+weave payload_too_large into HttpError:
+    return with kind is HttpErrorKind.PayloadTooLarge, message is "payload too large"
+
+## Error 415.
+weave unsupported_media_type into HttpError:
+    return with kind is HttpErrorKind.UnsupportedMediaType, message is "unsupported media type"
+
+## Error 429.
+weave too_many_requests into HttpError:
+    return with kind is HttpErrorKind.TooManyRequests, message is "too many requests"
+
+## Error 500. El mensaje siempre es genérico: el detalle no sale al cliente.
+weave internal into HttpError:
+    return with kind is HttpErrorKind.Internal, message is "internal server error"
+
+## Código de estado HTTP de un error.
+weave status_of with failure as HttpError into int:
+    return judge failure.kind:
+        when BadRequest -> 400
+        when Unauthorized -> 401
+        when Forbidden -> 403
+        when NotFound -> 404
+        when MethodNotAllowed -> 405
+        when Conflict -> 409
+        when PayloadTooLarge -> 413
+        when UnsupportedMediaType -> 415
+        when TooManyRequests -> 429
+        when Internal -> 500
+
+## Texto para el cuerpo de la página de error.
+weave message_of with failure as HttpError into string:
+    return failure.message

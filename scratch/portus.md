@@ -202,6 +202,28 @@ siguiente). Todo hecho y verificado:
 **Siguiente: F1** (router, contexto, dispatcher, middlewares) según
 [`portus-plan.md`](portus-plan.md).
 
+### F1a — en curso (router + despacho)
+
+Hecho y verificado por el gate e2e:
+
+- `route.pengu`: `Pattern`/`Segment`/`Params`, `compile` (literal, `:param`,
+  `*wildcard`; score por especificidad), `match_pattern`, `get_param`.
+- `error.pengu`: `HttpError` como `rune { kind as HttpErrorKind, message }`
+  (workaround del bug 10 de omens algebraicos).
+- `handler.pengu`: `Handler` (alias de tipo función), `ok_void`, `err_void`.
+- `context.pengu`: parámetros, método, ruta, query y respuestas de texto/HTML.
+- `application.pengu`: `Application`, `add`, `dispatch`, 404/405, 500,
+  `serve_with`.
+- Fachada: `new_application`, `get/post/put/patch/delete/head/any`, `serve`.
+- `tests/e2e_hello.sh` amplía el gate F0: `/`, `/users/:name`, 404 y keep-alive.
+
+Bug 11 del compilador (lista vacía con `-Wunused-variable`) arreglado y
+publicado en 0.28.7 con `tests/regress_empty_list.sh`.
+
+Pendiente de F1: middlewares (`Before`/`Finisher`), subida de cuerpo, 405 con
+`Allow`, `HEAD` automático, `mount`, y los tests unitarios de `route` y
+`application`.
+
 ---
 
 ## 8. Estado del repositorio
@@ -214,7 +236,12 @@ portus/
 │   ├── portus.pengu            # fachada pública (alias + serve)
 │   └── portus/
 │       ├── native.d.pengu      # declares del header C
-│       └── transport.pengu     # Request/Response/ServeOptions + puente
+│       ├── transport.pengu     # Request/Response/ServeOptions + puente
+│       ├── route.pengu         # patrones y parámetros
+│       ├── error.pengu         # HttpError y su status
+│       ├── handler.pengu       # Handler + ok_void/err_void
+│       ├── context.pengu       # Context y sus métodos
+│       └── application.pengu   # Application, dispatch, serve
 ├── include/
 │   ├── portus_native.h         # servidor poll(2) + llhttp, header-only
 │   └── llhttp/                 # llhttp 9.4.3 vendorizado (LICENSE, SOURCE)
