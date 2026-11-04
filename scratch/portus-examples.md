@@ -47,31 +47,31 @@ Leyenda: ✅ factible · 🟡 adaptado (no idéntico) · ⛔ no aplica en v1.
 
 | # | Ejemplo de Express | Estado | Fase | APIs de portus que ejercita |
 |---|---|---|---|---|
-| 1 | `hello-world` | ✅ hecho | F1 | `get`, `send_text`, `serve` |
-| 2 | `params` | ✅ hecho | F1 | `:param`, `param`, `query` |
-| 3 | `route-separation` | ✅ hecho | F1 | módulos separados, `get` |
-| 4 | `multi-router` | ✅ hecho | F1 | `new_group`, `Group` |
-| 5 | `route-middleware` | ✅ hecho | F1 | `middleware`, `use` |
-| 6 | `route-map` | ⬜ | F2 | `any`, tabla de handlers |
-| 7 | `error` | ✅ hecho | F1 | `err_void`, `on_error`, `on_not_found` |
-| 8 | `error-pages` | ✅ | F2 | `on_not_found`, `send_html` |
-| 9 | `cookies` | ✅ | F2 | `examples/cookies-and-json`: `set_cookie`, `cookie`, `body_json` |
-| 10 | `static-files` | ✅ | F2 | `use_static`, `StaticOptions` |
-| 11 | `downloads` | ✅ | F2 | `send_file`, `Content-Disposition` |
-| 12 | `content-negotiation` | ✅ | F2 | `Accept`, `send_*`, `Vary` |
-| 13 | `search` | ✅ | F2 | `body_form`, `queries`, `send_html` |
-| 14 | `resource` | ✅ | F2 | CRUD, `redirect`, `set_status` |
-| 15 | `web-service` | ✅ | F2 | JSON, auth por cabecera |
-| 16 | `vhost` | ✅ | F2 | `Request.host`, prefijos |
-| 17 | `session` (hecho: `session`) | ✅ | F5 | `use_session`, `Session` |
-| 18 | `cookie-sessions` | ✅ | F5 | cookie firmada |
-| 19 | `auth` (hecho: `auth-jwt`) | ✅ | F5 | `use_basic_auth` |
-| 20 | `online` | 🟡 | F5 | sesiones + SSE (sin Redis) |
-| 21 | `file-upload` (propio) | ✅ | F5 | multipart |
-| 22 | `auth-jwt` (propio) | ✅ | F5 | `use_bearer`, JWT |
-| 23 | `websocket-chat` (propio) | ✅ | F4 | `websocket.get`, rooms |
-| 24 | `sse-dashboard` (propio) | ✅ | F3 | `sse_open` |
-| 25 | `rest-api` (propio) | ✅ | F6 | todo junto |
+| 1 | `hello-world` | ✅ `examples/hello-world` | F1 | `get`, `send_text`, `serve` |
+| 2 | `params` | ✅ `examples/params` | F1 | `:param`, `param`, `query_param` |
+| 3 | `route-separation` | ✅ `examples/route-separation` | F1 | módulos separados, `get` |
+| 4 | `multi-router` | ✅ `examples/multi-router` | F1 | `new_group`, `Group` |
+| 5 | `route-middleware` | ✅ `examples/route-middleware` | F1 | `middleware`, `use` |
+| 6 | `route-map` | ✅ `examples/route-map` | F1 | `any "/*path"`, `context.path` |
+| 7 | `error` | ✅ `examples/error` | F1 | `err_void`, `on_error`, `on_not_found`, `status_of` |
+| 8 | `error-pages` | 🟡 cubierto por `examples/error` | F1 | `on_not_found`, `send_html` |
+| 9 | `cookies` | ✅ `examples/cookies-and-json` | F2 | `set_cookie`, `cookie`, `body_json`, `use_cors` |
+| 10 | `static-files` | ✅ `examples/static-files` | F2 | `mount_static` (ETag, Last-Modified, Range) |
+| 11 | `downloads` | ✅ `examples/downloads` | F2 | `send_body_with_type`, `Content-Disposition` |
+| 12 | `content-negotiation` | ✅ `examples/content-negotiation` | F2 | `portus.best`, `accepts` |
+| 13 | `search` | ✅ `examples/search` | F2 | `query_param`, strings (`contains`) |
+| 14 | `resource` | ✅ `examples/resource` | F2 | CRUD, `body_form`, `send_status` |
+| 15 | `web-service` | ✅ `examples/web-service` | F2 | JSON, auth por cabecera |
+| 16 | `vhost` | ✅ `examples/vhost` | F2 | `context.header "host"` |
+| 17 | `session` | ✅ `examples/session` | F5 | `sessions_start/load/get/set/save/destroy` |
+| 18 | `cookie-sessions` | ✅ `examples/cookie-sessions` | F5 | cookies firmadas por la aplicación |
+| 19 | `auth` | ✅ `examples/auth-jwt` | F5 | `basic_auth`, `jwt_bearer` |
+| 20 | `online` | 🟡 `examples/online` (sin Redis) | F5 | `static var` documentado + contador |
+| 21 | `file-upload` (propio) | ✅ `examples/file-upload` | F5 | `body_multipart`, `multipart_part` |
+| 22 | `auth-jwt` (propio) | ✅ `examples/auth-jwt` | F5 | `jwt_sign`, `jwt_verify`, `bearer_required` |
+| 23 | `websocket-chat` (propio) | ✅ `examples/websocket-chat` | F3 | `ws_upgrade`, `Conn.send_text`, broadcast |
+| 24 | `sse-dashboard` (propio) | ⬜ pendiente | F6 | `sse_open`, `sse_send` |
+| 25 | `rest-api` (propio) | ⬜ pendiente | F6 | todo junto |
 
 ⛔ **No aplica** (y por qué):
 

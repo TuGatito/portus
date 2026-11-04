@@ -383,7 +383,7 @@ tipo subyacente).
 - `examples/auth-jwt` y `examples/session` con README y smoke test real.
 - Tests: 42 unitarios.
 
-### F6 — en curso (ejemplos completos, docs y release)
+### F6 — cerrado (ejemplos completos, docs y release)
 
 - **21 ejemplos** en `examples/` que compilan todos:
   `hello-world`, `params`, `route-separation`, `multi-router`,
@@ -405,8 +405,11 @@ tipo subyacente).
   añadir una segunda tabla. Regresiones:
   `tests/regress_path_dep_no_generated.sh` y
   `tests/regress_dep_manifest_section.sh`.
-- Pendiente para cerrar F6: CHANGELOG de portus, tag `v0.1.0` y `psc doc` en
-  CI.
+- `CHANGELOG.md` con la 0.1.0, tag `v0.1.0` en git y `README.md` raíz con
+  instalación, hello world y tabla de features.
+- Gate de la fase: 42 tests unitarios, `tests/e2e_hello.sh`,
+  `tests/e2e_ws.sh` y `tests/e2e_security.sh` verdes, `./examples/run.sh` con
+  los 21 `ok`.
 
 ## 8. Estado del repositorio
 
