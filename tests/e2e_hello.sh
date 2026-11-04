@@ -122,6 +122,11 @@ grouped_body="$(curl -s --max-time 3 "http://127.0.0.1:$port/api/ping")"
 boom_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:$port/boom")"
 [ "$boom_code" = "400" ] || { echo "FAIL: err_void debía dar 400, dio $boom_code"; exit 1; }
 
+head_headers="$(curl -s -I --max-time 3 "http://127.0.0.1:$port/")"
+echo "$head_headers" | grep -qi "^content-length: " || { echo "FAIL: HEAD sin Content-Length"; exit 1; }
+opt_headers="$(curl -s -D - -o /dev/null --max-time 3 -X OPTIONS "http://127.0.0.1:$port/")"
+echo "$opt_headers" | head -1 | grep -q "204" || { echo "FAIL: OPTIONS debía dar 204"; exit 1; }
+echo "$opt_headers" | grep -qi "^allow: " || { echo "FAIL: OPTIONS sin Allow"; exit 1; }
 allow="$(curl -s -D - -o /dev/null --max-time 3 "http://127.0.0.1:$port/only-post")"
 echo "$allow" | grep -qi "^Allow: POST" || { echo "FAIL: 405 sin Allow"; exit 1; }
 [ "$(echo "$allow" | head -1 | grep -c ' 405 ')" = "1" ] || { echo "FAIL: se esperaba 405"; exit 1; }

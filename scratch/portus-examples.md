@@ -47,13 +47,13 @@ Leyenda: ✅ factible · 🟡 adaptado (no idéntico) · ⛔ no aplica en v1.
 
 | # | Ejemplo de Express | Estado | Fase | APIs de portus que ejercita |
 |---|---|---|---|---|
-| 1 | `hello-world` | ✅ | F1 | `get`, `send_text`, `listen`, `run` |
-| 2 | `params` | ✅ | F1 | `:param`, `*`, `param`, `queries` |
-| 3 | `route-separation` | ✅ | F1 | módulos separados, `Router` |
-| 4 | `multi-router` | ✅ | F1 | `new_router`, `mount` |
-| 5 | `route-middleware` | 🟡 | F1 | `use_at`, orden, cortar sin enviar |
-| 6 | `route-map` | 🟡 | F1 | `Router`, `any`, tabla de handlers |
-| 7 | `error` | ✅ | F1 | `err_of`, `on_error`, finishers |
+| 1 | `hello-world` | ✅ hecho | F1 | `get`, `send_text`, `serve` |
+| 2 | `params` | ✅ hecho | F1 | `:param`, `param`, `query` |
+| 3 | `route-separation` | ✅ hecho | F1 | módulos separados, `get` |
+| 4 | `multi-router` | ✅ hecho | F1 | `new_group`, `Group` |
+| 5 | `route-middleware` | ✅ hecho | F1 | `middleware`, `use` |
+| 6 | `route-map` | ⬜ | F2 | `any`, tabla de handlers |
+| 7 | `error` | ✅ hecho | F1 | `err_void`, `on_error`, `on_not_found` |
 | 8 | `error-pages` | ✅ | F2 | `on_not_found`, `send_html` |
 | 9 | `cookies` | ✅ | F2 | `set_cookie`, `cookie`, `Cookie` |
 | 10 | `static-files` | ✅ | F2 | `use_static`, `StaticOptions` |

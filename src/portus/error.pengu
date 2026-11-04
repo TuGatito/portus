@@ -121,3 +121,17 @@ test "el mensaje del 400 es el que dio el handler":
 test "el 500 nunca filtra el detalle interno":
     var failure as HttpError is calling internal
     calling ward.assert_eq_string with (calling message_of with failure), "internal server error"
+
+test "method_not_allowed guarda la lista de métodos":
+    var failure as HttpError is calling method_not_allowed with "GET, HEAD"
+    calling ward.assert_eq_int with (calling status_of with failure), 405
+    calling ward.assert_eq_string with (calling message_of with failure), "GET, HEAD"
+
+test "conflict lleva su mensaje":
+    var failure as HttpError is calling conflict with "ya existe"
+    calling ward.assert_eq_int with (calling status_of with failure), 409
+    calling ward.assert_eq_string with (calling message_of with failure), "ya existe"
+
+test "unauthorized y forbidden no filtran detalle":
+    calling ward.assert_eq_string with (calling message_of with (calling unauthorized)), "unauthorized"
+    calling ward.assert_eq_string with (calling message_of with (calling forbidden)), "forbidden"

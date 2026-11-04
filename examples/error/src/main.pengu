@@ -1,0 +1,28 @@
+## Manejo de errores con `on_error` y `on_not_found`, como `error` de Express.
+import std.spark
+import portus
+
+## Falla a propósito con un 400.
+weave boom with context as ref to portus.Context into result of void to portus.HttpError:
+    return calling portus.err_void with (calling portus.bad_request with "algo salió mal")
+
+## Responde a las rutas que no existen.
+weave missing with context as ref to portus.Context into result of void to portus.HttpError:
+    calling context.send_status with 404, "no existe esa ruta"
+    return calling portus.ok_void
+
+## Formatea cualquier error no manejado, conservando su código.
+weave handle_error with context as ref to portus.Context, failure as portus.HttpError into result of void to portus.HttpError:
+    calling context.send_status with (calling portus.status_of with failure), "error controlado"
+    return calling portus.ok_void
+
+weave main into int:
+    var app as portus.Application is calling portus.new_application
+    let added as result of void to portus.PatternError is calling portus.get with sigil of app, "/boom", boom
+    calling portus.on_not_found with sigil of app, missing
+    calling portus.on_error with sigil of app, handle_error
+    calling spark.println with "portus escuchando en http://127.0.0.1:3000"
+    let served as result of int to string is calling portus.serve with sigil of app, 3000
+    let bound as int is served or:
+        return 1
+    return 0

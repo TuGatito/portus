@@ -2,7 +2,7 @@
 
 > Bugs del compilador que portus encontró. Todos están confirmados con una
 > reproducción mínima. Estado a 2026-11-04: **1–7 y 11 arreglados** y publicados
-> en 0.28.1–0.28.7; **3, 8, 9, 10, 12, 13 y 14 abiertos** (portus usa workarounds).
+> en 0.28.1–0.28.7; **3, 8, 9, 10, 12, 13, 14 y 15 abiertos** (portus usa workarounds).
 >
 > Checkout: `/home/tugatito/Documentos/GitHub/PenguScript` (v0.28.7, `build/psc`).
 > Cada arreglo lleva su test en `tests/regress_*.sh`, su entrada en `CHANGELOG.md`
@@ -28,6 +28,7 @@
 | 12 | P1 | `maybe Fn` / `result of … to …` con payload de tipo función emite C inválido | `src/psc/codegen/expr.pengu` (`result_ctor`) | abierto | campo plano + flag `bool` |
 | 13 | P2 | Llamar un método a través de un campo `ref` emite `T**`; `set x.campo` sobre un `ref` | codegen (receptores) | abierto | enlazar a un local |
 | 14 | P1 | Un módulo llamado `router`/`routes` no emite sus weaves libres | codegen/DCE (sin reducir) | abierto | módulo `portus.group` |
+| 15 | P1 | Un nombre suelto resuelve a la función del módulo **consumidor**, no a la del importado | sema (resolución de nombres) | abierto | calificar `modulo.fn` |
 
 ---
 
@@ -585,7 +586,47 @@ Pendiente: reducirlo con una copia del repo e incluirlo aquí como repro.
 
 ---
 
-## 15. Cómo se arreglan (proceso)
+## 15. P1 — Un nombre suelto resuelve a la función del módulo consumidor
+
+Reproducción (`/tmp/b15`):
+
+```pengu
+# src/err.pengu
+weave not_found into int:
+    return 404
+
+# src/app.pengu
+import err
+weave handler into int:
+    return calling not_found
+
+# src/main.pengu
+import app
+weave not_found with x as int into int:
+    return x
+```
+
+`psc build` falla con `error[E0005]: too few arguments in call` señalando
+`app.pengu:4` (`calling not_found`): la llamada se resolvió contra la `not_found`
+de `main.pengu` (1 parámetro) en vez de la de `err.pengu` (0 parámetros).
+
+**Causa.** La resolución de un nombre suelto de función consulta un registro
+global donde el módulo de la aplicación (el consumidor) gana sobre el módulo
+importado por el archivo que hace la llamada.
+
+**Impacto real.** Rompió `examples/error` de portus: `application.pengu` llama
+`not_found` de `portus.error` y el ejemplo define su propio handler `not_found`.
+
+**Arreglo propuesto.** Si el nombre no está declarado en el módulo actual,
+buscar solo en los módulos que ese módulo importa (en orden), nunca en módulos
+ajenos al grafo de imports de ese archivo.
+
+**Workaround en portus:** importar con alias y calificar siempre
+(`import portus.error as error_module` + `calling error_module.not_found`).
+
+---
+
+## 16. Cómo se arreglan (proceso)
 
 1. Rama por bug en el checkout de PenguScript:
    `fix/deps-derive-name`, `fix/alias-fn-call`, `fix/generic-forward`,
@@ -617,7 +658,7 @@ Pendiente: reducirlo con una copia del repo e incluirlo aquí como repro.
 
 ---
 
-## 16. Notas de ergonomía (no son bugs, pero duelen)
+## 17. Notas de ergonomía (no son bugs, pero duelen)
 
 Detectadas escribiendo los spikes; no bloquean portus, pero conviene saberlas:
 

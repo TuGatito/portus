@@ -79,3 +79,16 @@ test "el grupo antepone el prefijo":
     calling ward.assert_eq_string with (calling Group.full_pattern with sigil of api, "/users"), "/api/users"
     calling ward.assert_eq_string with (calling Group.full_pattern with sigil of api, "/"), "/api"
     calling application_module.free_application with sigil of app
+
+test "el prefijo se normaliza sin barra final":
+    var app as Application is calling application_module.new_application
+    var g as Group is calling group_with_prefix with sigil of app, "/"
+    calling ward.assert_eq_string with (calling Group.full_pattern with sigil of g, "/users"), "/users"
+    calling application_module.free_application with sigil of app
+
+test "un grupo sin prefijo deja el patrón igual":
+    var app as Application is calling application_module.new_application
+    var g as Group is calling group_with_prefix with sigil of app, ""
+    calling ward.assert_eq_string with (calling Group.full_pattern with sigil of g, "/users"), "/users"
+    calling ward.assert_eq_string with (calling Group.full_pattern with sigil of g, "/"), "/"
+    calling application_module.free_application with sigil of app

@@ -18,7 +18,7 @@
 import std.arena as arena_module
 import std.scrolls
 import portus.context as context_module
-import portus.error
+import portus.error as error_module
 import portus.handler as handler_module
 import portus.route as route
 import portus.transport as transport
@@ -225,12 +225,17 @@ weave _matches_prefix with ctx as ref to Context, prefix as string into bool:
     return calling scrolls.starts_with with (calling ctx.path), prefix
 
 ## Busca la ruta y ejecuta su handler. Devuelve el fallo, si lo hay.
+##
+## Automatismos: `HEAD` cae en la ruta `GET` si no hay una `HEAD` propia (el
+## transporte omite el cuerpo), y `OPTIONS` sin ruta propia responde `204` con
+## `Allow`.
 weave _run_route with app as ref to Application, ctx as ref to Context into maybe HttpError:
     var method as string is calling ctx.method
     var path as string is calling ctx.path
     var allowed as list of string is []
     var chosen as int is -1
     var chosen_params as route.Params is calling _empty_params
+    var fallback as int is -1
     var i as int is 0
     while i < app->_routes.len:
         var entry as RouteEntry is (app->_routes at i)
@@ -240,23 +245,42 @@ weave _run_route with app as ref to Application, ctx as ref to Context into mayb
                 set chosen is i
                 set chosen_params is found.value
                 break
-            calling route.free_params with found.value
-            calling allowed.push with calling route._copy with entry.method
+            if method == "HEAD" and entry.method == "GET" and fallback < 0:
+                set fallback is i
+                calling route.free_params with found.value
+            else:
+                calling route.free_params with found.value
+                calling allowed.push with (calling route._copy with entry.method)
+                if entry.method == "GET":
+                    calling allowed.push with (calling route._copy with "HEAD")
         set i is i + 1
+    if chosen < 0 and fallback >= 0:
+        set chosen is fallback
+        var fb as RouteEntry is (app->_routes at fallback)
+        var again as maybe route.Params is calling route.match_pattern with fb.pattern, path
+        set chosen_params is (again.value)
     if chosen < 0:
+        if method == "OPTIONS" and allowed.len > 0:
+            var options_allow as string is calling _join_methods with allowed
+            calling route.free_strings with allowed
+            var options_response as ref to transport.Response is ctx->response
+            calling options_response.set_status with 204
+            calling options_response.set_header with "Allow", options_allow
+            calling options_response.mark_sent
+            return maybe none
         if allowed.len > 0:
             var allow as string is calling _join_methods with allowed
             calling route.free_strings with allowed
-            return some (calling method_not_allowed with allow)
+            return some (calling error_module.method_not_allowed with allow)
         calling route.free_strings with allowed
-        return some (calling not_found)
+        return some (calling error_module.not_found)
     calling route.free_strings with allowed
     set ctx->params is chosen_params
     var entry as RouteEntry is (app->_routes at chosen)
     var outcome as result of void to HttpError is calling entry.handler with ctx
     if outcome.is_ok:
         if not calling ctx.is_sent:
-            return some (calling internal)
+            return some (calling error_module.internal)
         return maybe none
     return some (outcome.error)
 
@@ -292,10 +316,10 @@ weave _join_methods with methods as list of string into string:
 ## ## Memoria
 ## El cuerpo se copia en la respuesta.
 weave respond_error with response as ref to transport.Response, failure as HttpError into void:
-    var status as int is calling status_of with failure
-    var message as string is calling message_of with failure
+    var status as int is calling error_module.status_of with failure
+    var message as string is calling error_module.message_of with failure
     calling response.set_status with status
-    if failure.kind == HttpErrorKind.MethodNotAllowed:
+    if failure.kind == error_module.HttpErrorKind.MethodNotAllowed:
         calling response.set_header with "Allow", message
         calling response.set_header with "Content-Type", "text/plain; charset=utf-8"
         calling response.write_text with "method not allowed"

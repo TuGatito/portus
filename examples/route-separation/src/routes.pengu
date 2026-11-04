@@ -1,0 +1,22 @@
+## Rutas de la aplicación, en su propio módulo (como `routes/` de Express).
+##
+## ## Ejemplo
+## ```pengu
+## calling routes.register with sigil of app
+## ```
+import portus
+
+## Responde en `GET /`.
+weave home with context as ref to portus.Context into result of void to portus.HttpError:
+    calling context.send_text with "inicio"
+    return calling portus.ok_void
+
+## Responde en `GET /about`.
+weave about with context as ref to portus.Context into result of void to portus.HttpError:
+    calling context.send_text with "acerca de"
+    return calling portus.ok_void
+
+## Registra todas las rutas de este módulo en `app`.
+weave register with app as ref to portus.Application into void:
+    let a as result of void to portus.PatternError is calling portus.get with app, "/", home
+    let b as result of void to portus.PatternError is calling portus.get with app, "/about", about

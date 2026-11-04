@@ -241,9 +241,28 @@ Commit `4d23ed4 f1a: router, contexto y dispatcher con gate e2e de rutas`.
   `/boom` (400), `POST /only-post` (405 + `Allow`), middleware `X-Portus`,
   `on_not_found` propio y keep-alive → `OK e2e hello (puerto 52503)`.
 
-Pendiente de F1 (cierre): ejemplos `examples/{hello-world,params,multi-router,
-route-middleware,error}`, `HEAD` automático, `mount`, y los ~60 tests del gate
-F1 de `portus-plan.md`.
+Cierre de F1:
+
+- `HEAD` automático: si no hay ruta `HEAD`, se usa la `GET` (el transporte omite
+  el cuerpo). `OPTIONS` sin ruta propia responde `204` + `Allow`. `Allow` de un
+  405 incluye `HEAD` cuando hay `GET`.
+- `examples/`: `hello-world`, `params`, `multi-router`, `route-middleware`,
+  `error`, cada uno con `pengu.toml` (dependencia `path` al repo), `README.md` y
+  `examples/run.sh` que los compila todos. Los 5 arrancan y responden lo que
+  dicen sus README.
+- Tests: 25 unitarios (`All 25 test(s) passed.`).
+- Fachada: `status_of`, `new_group`, `Group`, `Middleware`, `ErrorHandler`,
+  `MiddlewareFn`, `AppHook`.
+- Bugs nuevos documentados: 12 (`maybe` de puntero a función), 13
+  (`ctx->campo.metodo` → `T**`), 14 (módulo `router` sin weaves libres), 15
+  (nombre suelto resuelve al módulo consumidor).
+
+**Decisión de diseño tomada al implementar:** no hay `mount`; un "router
+montado" es un `Group` (aplicación + prefijo) y `use_at(prefix)` para middleware
+con prefijo. Un `Application` dentro de otra aplicación no aporta nada que el
+grupo no haga y complica el ownership.
+
+F1 — **cerrado** con el gate: build + 25 tests + e2e + 5 ejemplos.
 
 ---
 

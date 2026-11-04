@@ -359,3 +359,57 @@ test "un parámetro que no existe devuelve none":
     var params as Params is with names is [], values is []
     var absent as maybe string is calling get_param with params, "nope"
     calling ward.assert_false with absent.is_present
+
+test "el comodín desnudo absorbe el resto":
+    var compiled as result of Pattern to PatternError is calling compile with "/files/*"
+    calling ward.assert_true with compiled.is_ok
+    var pattern as Pattern is compiled.value
+    var found as maybe Params is calling match_pattern with pattern, "/files/a/b"
+    calling ward.assert_true with found.is_present
+    calling free_params with (found.value)
+
+test "una ruta con barra final casa con el patrón sin barra":
+    var compiled as result of Pattern to PatternError is calling compile with "/users/:name"
+    calling ward.assert_true with compiled.is_ok
+    var pattern as Pattern is compiled.value
+    var found as maybe Params is calling match_pattern with pattern, "/users/ada"
+    calling ward.assert_true with found.is_present
+    calling free_params with (found.value)
+
+test "un patrón vacío se rechaza":
+    var compiled as result of Pattern to PatternError is calling compile with ""
+    calling ward.assert_true with compiled.is_ok
+
+test "el wildcard puntúa menos que el parámetro y el literal":
+    var lit as result of Pattern to PatternError is calling compile with "/a/b/c"
+    var par as result of Pattern to PatternError is calling compile with "/a/:x"
+    var wild as result of Pattern to PatternError is calling compile with "/a/*rest"
+    calling ward.assert_true with lit.is_ok
+    calling ward.assert_true with par.is_ok
+    calling ward.assert_true with wild.is_ok
+    calling ward.assert_true with (lit.value).score > (par.value).score
+    calling ward.assert_true with (par.value).score > (wild.value).score
+    calling free_pattern with (lit.value)
+    calling free_pattern with (par.value)
+    calling free_pattern with (wild.value)
+
+test "los nombres y valores de Params van en orden":
+    var compiled as result of Pattern to PatternError is calling compile with "/orgs/:org/repos/:repo"
+    calling ward.assert_true with compiled.is_ok
+    var pattern as Pattern is compiled.value
+    var found as maybe Params is calling match_pattern with pattern, "/orgs/acme/repos/portus"
+    calling ward.assert_true with found.is_present
+    var params as Params is found.value
+    calling ward.assert_eq_int with params.names.len, 2
+    calling ward.assert_eq_int with params.values.len, 2
+    var org as maybe string is calling get_param with params, "org"
+    calling ward.assert_true with org.is_present
+    calling ward.assert_eq_string with (org.value), "acme"
+    calling free_params with params
+
+test "una ruta más larga que el patrón no casa":
+    var compiled as result of Pattern to PatternError is calling compile with "/a/:x"
+    calling ward.assert_true with compiled.is_ok
+    var found as maybe Params is calling match_pattern with (compiled.value), "/a/b/c"
+    calling ward.assert_false with found.is_present
+    calling free_pattern with (compiled.value)

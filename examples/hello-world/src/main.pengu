@@ -1,0 +1,20 @@
+## El ejemplo mínimo de Express, con portus.
+##
+##     psc run src/main.pengu      # http://127.0.0.1:3000
+import std.spark
+import portus
+
+## Responde "hola desde portus" a cualquier `GET /`.
+weave hello with context as ref to portus.Context into result of void to portus.HttpError:
+    calling context.send_text with "hola desde portus"
+    return calling portus.ok_void
+
+weave main into int:
+    var app as portus.Application is calling portus.new_application
+    let added as result of void to portus.PatternError is calling portus.get with sigil of app, "/", hello
+    calling spark.println with "portus escuchando en http://127.0.0.1:3000"
+    let served as result of int to string is calling portus.serve with sigil of app, 3000
+    let bound as int is served or:
+        calling spark.println with "no se pudo escuchar en el puerto 3000"
+        return 1
+    return 0

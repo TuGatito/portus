@@ -1,0 +1,13 @@
+## Rutas separadas en su propio módulo, como `route-separation` de Express.
+import std.spark
+import portus
+import routes
+
+weave main into int:
+    var app as portus.Application is calling portus.new_application
+    calling routes.register with sigil of app
+    calling spark.println with "portus escuchando en http://127.0.0.1:3000"
+    let served as result of int to string is calling portus.serve with sigil of app, 3000
+    let bound as int is served or:
+        return 1
+    return 0

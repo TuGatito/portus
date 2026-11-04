@@ -1,0 +1,24 @@
+## Middleware que corre antes de las rutas, como `route-middleware` de Express.
+import std.spark
+import portus
+
+## Añade una cabecera a toda respuesta.
+weave tag with data as ref to void, context as ref to portus.Context into result of void to portus.HttpError:
+    calling context.set_header with "X-Ruta", "con-middleware"
+    return calling portus.ok_void
+
+## Una ruta normal.
+weave home with context as ref to portus.Context into result of void to portus.HttpError:
+    calling context.send_text with "con middleware"
+    return calling portus.ok_void
+
+weave main into int:
+    var app as portus.Application is calling portus.new_application
+    var mw as portus.Middleware is calling portus.middleware with tag
+    calling portus.use with sigil of app, mw
+    let added as result of void to portus.PatternError is calling portus.get with sigil of app, "/", home
+    calling spark.println with "portus escuchando en http://127.0.0.1:3000"
+    let served as result of int to string is calling portus.serve with sigil of app, 3000
+    let bound as int is served or:
+        return 1
+    return 0

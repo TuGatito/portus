@@ -141,6 +141,10 @@ weave on_start with app as ref to Application, hook as AppHook into void:
 weave on_shutdown with app as ref to Application, hook as AppHook into void:
     return calling application_module.on_shutdown with app, hook
 
+## Código de estado HTTP de un `HttpError`.
+weave status_of with failure as HttpError into int:
+    return calling error.status_of with failure
+
 ## Crea un `HttpError` 400.
 weave bad_request with message as string into HttpError:
     return calling error.bad_request with message

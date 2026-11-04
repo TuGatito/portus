@@ -1,0 +1,26 @@
+## Rutas con parámetros y query string, como `examples/params` de Express.
+import std.spark
+import portus
+
+## `GET /users/:name` → saluda por nombre.
+weave user with context as ref to portus.Context into result of void to portus.HttpError:
+    let name as maybe string is calling context.param with "name"
+    let who as string is name or else "anon"
+    calling context.send_text with "hola {who}"
+    return calling portus.ok_void
+
+## `GET /greet?name=ada` → saluda por query.
+weave greet with context as ref to portus.Context into result of void to portus.HttpError:
+    let q as string is calling context.query
+    calling context.send_text with "query: {q}"
+    return calling portus.ok_void
+
+weave main into int:
+    var app as portus.Application is calling portus.new_application
+    let a as result of void to portus.PatternError is calling portus.get with sigil of app, "/users/:name", user
+    let b as result of void to portus.PatternError is calling portus.get with sigil of app, "/greet", greet
+    calling spark.println with "portus escuchando en http://127.0.0.1:3000"
+    let served as result of int to string is calling portus.serve with sigil of app, 3000
+    let bound as int is served or:
+        return 1
+    return 0
