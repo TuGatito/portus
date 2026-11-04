@@ -1,8 +1,44 @@
-## Declaraciones C de portus (privado): transporte TCP, parser HTTP y utilidades
-## nativas. La implementación vive en `include/portus_native.h`.
+## Binding C del transporte HTTP/1.1 de portus.
 ##
-## Este módulo no forma parte de la API pública: importa `portus`.
+## Declara únicamente lo que `include/portus_native.h` exporta: el bucle de
+## `poll(2)`, el parser incremental de llhttp y los accesores que usa el
+## dispatcher. Ningún tipo de llhttp cruza esta frontera.
+##
+## Este módulo solo declara; la lógica vive en `portus.transport`.
 include "portus_native.h"
 
-## Devuelve `n + 1`. Prueba de humo del puente C.
+## Petición HTTP en curso. Opaca: solo se manipula con los accesores de abajo.
+alias portus_request_t as opaque
+
+## Respuesta HTTP en construcción. Opaca, igual que la petición.
+alias portus_response_t as opaque
+
+# --- Utilidades -----------------------------------------------------------
+
 declare portus_native_ping with n as int into int
+declare portus_native_last_error into ref to frozen char
+
+# --- Servidor -------------------------------------------------------------
+
+declare portus_native_serve with host as ref to frozen byte, port as int, max_connections as int, max_header_bytes as int, max_body_bytes as int, idle_timeout_ms as int, keep_alive as int, handler as weave with userdata as ref to void, request as ref to void, response as ref to void into void , userdata as ref to void, out_port as ref to int into int
+
+# --- Petición -------------------------------------------------------------
+
+declare portus_native_request_method_name with request as ref to portus_request_t, length as ref to int into ref to frozen char
+declare portus_native_request_path with request as ref to portus_request_t, length as ref to int into ref to frozen char
+declare portus_native_request_query with request as ref to portus_request_t, length as ref to int into ref to frozen char
+declare portus_native_request_body with request as ref to portus_request_t, length as ref to int into ref to frozen char
+declare portus_native_request_header_count with request as ref to portus_request_t into int
+declare portus_native_request_header_name with request as ref to portus_request_t, index as int, length as ref to int into ref to frozen char
+declare portus_native_request_header_value with request as ref to portus_request_t, index as int, length as ref to int into ref to frozen char
+declare portus_native_request_keep_alive with request as ref to portus_request_t into int
+declare portus_native_request_http_minor with request as ref to portus_request_t into int
+declare portus_native_request_is_oversized with request as ref to portus_request_t into int
+
+# --- Respuesta ------------------------------------------------------------
+
+declare portus_native_response_set_status with response as ref to portus_response_t, status as int into void
+declare portus_native_response_write_bytes with response as ref to portus_response_t, data as ref to frozen byte, length as int into void
+declare portus_native_response_header_bytes with response as ref to portus_response_t, name as ref to frozen byte, name_length as int, value as ref to frozen byte, value_length as int into void
+declare portus_native_response_mark_sent with response as ref to portus_response_t into void
+declare portus_native_response_status with response as ref to portus_response_t into int

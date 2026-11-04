@@ -1,23 +1,29 @@
 # Portus — Arreglos necesarios en PenguScript
 
-> Estos son los bugs del compilador 0.28.0 que portus encontró. Cinco están
-> confirmados con reproducción mínima. Solo **uno** (P0) bloquea de verdad la
-> instalación; el resto tiene workaround, pero conviene arreglarlos porque
-> afectan a cualquiera que escriba una librería idiomática.
+> Bugs del compilador que portus encontró. Todos están confirmados con una
+> reproducción mínima. Estado a 2026-11-04: **1–5 arreglados** y publicados en
+> 0.28.1–0.28.4; **6 arreglado** en 0.28.5; **7 arreglado** en 0.28.6;
+> **8 pendiente** (workaround aplicado en portus).
 >
-> Checkout: `/home/tugatito/Documentos/GitHub/PenguScript` (v0.28.0, `build/psc`).
+> Checkout: `/home/tugatito/Documentos/GitHub/PenguScript` (v0.28.6, `build/psc`).
+> Cada arreglo lleva su test en `tests/regress_*.sh`, su entrada en `CHANGELOG.md`
+> y su bump de versión en todos los documentos.
 
 ---
 
 ## Resumen
 
-| # | Severidad | Síntoma | Archivo | Workaround en portus |
-|---|---|---|---|---|
-| 1 | **P0** | `psc add` sin `--name` corrompe el manifiesto | `src/psc/cmd/deps.pengu` | usar `--name portus` |
-| 2 | P1 | Llamar un alias de tipo función da E0020 | `src/psc/sema/infer/core.pengu` | tipo inline, no alias |
-| 3 | P1 | Genérico que reenvía un `of T` genera `void**` | codegen/sema de genéricos | no reenviar; tipo concreto |
-| 4 | P2 | Llamar un campo-función da E0004 | `src/psc/sema/infer/core.pengu` | variable local |
-| 5 | P2 | Nombre de variable = keyword C genera C inválido | `src/psc/codegen/context.pengu` | renombrar |
+| # | Severidad | Síntoma | Archivo | Estado | Workaround en portus |
+|---|---|---|---|---|---|
+| 1 | **P0** | `psc add` sin `--name` corrompe el manifiesto | `src/psc/cmd/deps.pengu` | 0.28.1 | ya no hace falta |
+| 2 | P1 | Llamar un alias de tipo función da E0020 | `src/psc/sema/infer/core.pengu` | 0.28.2 | ya no hace falta |
+| 3 | P1 | Genérico que reenvía un `of T` genera `void**` | codegen/sema de genéricos | abierto | no reenviar; tipo concreto |
+| 4 | P2 | Llamar un campo-función da E0004 | `src/psc/sema/infer/core.pengu` | 0.28.4 | ya no hace falta |
+| 5 | P2 | Nombre de variable = keyword C genera C inválido | `src/psc/codegen/context.pengu` | 0.28.3 | ya no hace falta |
+| 6 | P1 | `-D_POSIX_C_SOURCE` ausente: el C no ve la API POSIX | `src/psc/driver/toolchain.pengu` | 0.28.5 | ya no hace falta |
+| 7 | P1 | `ref to Alias` no resuelve métodos del tipo aliaseado | `src/psc/sema/infer/core.pengu` | 0.28.6 | ya no hace falta |
+| 8 | P1 | `padre.hijo.fn` desde el módulo `padre` llama a la `fn` local | sema (resolución de llamadas) | abierto | renombrar la función |
+| 9 | P1 | Bloque (`do:` / `if` multilínea) en posición de valor emite sólo la última expresión | parser+codegen (paridad) | abierto | `if c then a else b` |
 
 ---
 
@@ -230,7 +236,156 @@ usuarios que lo hagan verán el error hasta 0.28.1.
 
 ---
 
-## 6. Cómo se arreglan (proceso)
+## 6. P1 — El C generado no ve la API POSIX (−D_POSIX_C_SOURCE)
+
+**Impacto:** cualquier binding de sockets, tiempo o red falla al compilar. Sin
+esto no hay servidor HTTP posible.
+
+**Repro:** proyecto con `include/probe.h` que haga `#include <time.h>` y use
+`clock_gettime(CLOCK_MONOTONIC, …)`:
+
+```
+error: declaración implícita de la función ‘clock_gettime’
+error: ‘CLOCK_MONOTONIC’ no se declaró aquí
+```
+
+Con `struct addrinfo`/`getaddrinfo` el error es «tipo desconocido».
+
+**Causa:** `src/psc/driver/toolchain.pengu` añade siempre `-std=c11`; eso define
+`__STRICT_ANSI__` y glibc/musl ocultan las declaraciones POSIX. Definir
+`_POSIX_C_SOURCE` desde el header del proyecto llega tarde: el bundle incluye
+`<pengu_runtime.h>` antes.
+
+**Arreglo (0.28.5):** añadir a las cflags por defecto, tras `-std=c11` y `-Wall`:
+
+```pengu
+calling cflags.push with "-D_POSIX_C_SOURCE=200809L"
+calling cflags.push with "-D_DEFAULT_SOURCE"
+```
+
+El C sigue siendo C11 estricto; solo se expone la API POSIX.
+
+**Test:** `tests/regress_posix_c.sh` (un `#error` si falta la macro y una llamada
+real a `clock_gettime`).
+
+---
+
+## 7. P1 — `ref to Alias` no resuelve los métodos del tipo aliaseado
+
+**Impacto:** una fachada que reexporta un tipo con `alias` funciona por valor
+pero no cuando el handler recibe `ref to Tipo` — justo la firma de un handler
+HTTP.
+
+**Repro:**
+
+```pengu
+# demo/core.pengu: rune Widget + enchanting Widget { weave label ... }
+# demo.pengu:      alias Widget as demo.core.Widget
+weave probe with w as ref to Widget into string:
+    return calling w.label with "!"
+```
+
+`error[E0004]: undefined function 'label'`. Por valor (`w as Widget`) sí resuelve.
+
+**Causa:** en `src/psc/sema/infer/core.pengu`, `infer_call` hacía
+`set recv_lookup is rty.a` al desenvolver un `TkRef`, sin volver a resolver el
+alias. `underlying_type` solo atraviesa `TkAlias`/`TkSeal`, no punteros.
+
+**Arreglo (0.28.6):**
+
+```pengu
+if rty.kind == tk.SemaTypeKind.TkRef:
+    set recv_lookup is calling underlying_type with s, rty.a
+```
+
+**Test:** `tests/regress_ref_alias_method.sh`.
+
+---
+
+## 8. P1 — `padre.hijo.fn` desde el módulo `padre` resuelve a la `fn` local
+
+**Impacto:** una fachada no puede llamar a una función de su submódulo si ambas
+se llaman igual (caso normal: `portus.serve` → `portus.transport.serve`). La
+llamada se resuelve a la función local y el C generado se llama a sí mismo
+(`-Winfinite-recursion`).
+
+**Repro:**
+
+```pengu
+# demo/core.pengu: weave default_options into int: return 7
+# demo.pengu:      weave default_options into int: return 1
+#                  weave run into int: return calling demo.core.default_options
+# esperado 7, imprime 1; el C generado llama a demo_default_options()
+```
+
+Con nombres distintos (`demo.core.other`) funciona.
+
+**Causa:** en la resolución de llamadas cualificadas, cuando el primer segmento
+coincide con el módulo actual, la búsqueda acaba encontrando el símbolo local
+del mismo nombre antes que el del módulo importado.
+
+**Arreglo propuesto:** en `infer_call`, si la llamada viene con cualificación de
+módulo (`base_import >= 0`) y el símbolo del módulo no aparece, devolver E0004
+en vez de caer al registro local; y resolver primero el módulo cualificado.
+
+**Test:** pendiente (`tests/regress_qualified_local_name.sh`).
+
+**Workaround en portus:** `portus.transport.serve` se llama `serve_loop` y
+`portus.transport.default_options` se llama `base_options`.
+
+---
+
+## 9. P1 — Bloque en posición de valor: emite sólo la última expresión
+
+**Impacto:** el patrón más natural de PenguScript (`let x as int is do:` …) produce
+C que compila pero calcula mal, sin diagnóstico. Es peor que un error: pasa
+desapercibido.
+
+**Repro A (`do:`):**
+
+```pengu
+let v as int is do:
+    var a as int is 5
+    a + 4
+```
+
+C generado: `int32_t v = (a + 4);` — la sentencia `var a` se descarta y `a` queda
+sin declarar (`C compiler failed`).
+
+**Repro B (`if` multilínea):**
+
+```pengu
+let v as int is if flag:
+    1
+else:
+    0
+```
+
+C generado: `int32_t v = 0;` — la condición y las ramas desaparecen; siempre 0.
+La documentación de 0.28.0 lo presentaba como soportado.
+
+**Causa:** el `if`/`unless` multilínea en posición de valor se parsea como
+`if_stmt` (no como `if_expr`), y `emit_expr` no lo trata: cae en el `return "0"`
+final. El sema, por su política de "constructo fuera del subconjunto modelado",
+le asigna el tipo esperado y no se queja (`docs/PARITY.md`). Para `do:`
+(`NdDoExpr`) el codegen emite **sólo** el último hijo, sin las sentencias previas.
+
+**Estado:** **paridad pendiente del compilador**, no un arreglo de una línea.
+Requiere que el emisor pueda capturar sentencias dentro de una expresión C
+(`__extension__(({ … }))`), lo que hoy no existe: `emit.line` escribe en el
+buffer global. Plan: añadir captura al emisor, emitir el bloque dentro de la
+statement expression y asignar el valor de la última sentencia.
+
+**Workaround (aplicado en portus):** usar la forma de una línea
+`if c then a else b` (ver `src/portus/transport.pengu`, cálculo de `keep`), o un
+`weave` auxiliar. La documentación del lenguaje ya se corrigió para 0.28.6.
+
+**Test:** pendiente; el de regresión debe comprobar la forma correcta cuando se
+implemente (no se añade uno que congele el comportamiento actual).
+
+---
+
+## 10. Cómo se arreglan (proceso)
 
 1. Rama por bug en el checkout de PenguScript:
    `fix/deps-derive-name`, `fix/alias-fn-call`, `fix/generic-forward`,
@@ -262,7 +417,7 @@ usuarios que lo hagan verán el error hasta 0.28.1.
 
 ---
 
-## 7. Notas de ergonomía (no son bugs, pero duelen)
+## 11. Notas de ergonomía (no son bugs, pero duelen)
 
 Detectadas escribiendo los spikes; no bloquean portus, pero conviene saberlas:
 

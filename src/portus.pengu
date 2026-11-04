@@ -1,24 +1,56 @@
-## portus — framework HTTP para PenguScript, al estilo de Express.js y Hono.js.
+## portus — framework HTTP para PenguScript, al estilo de Express y Hono.
 ##
-## Un servidor HTTP con router, contexto de petición y middleware componible.
+## Fachada pública del paquete. Reexporta los tipos del transporte (`Request`,
+## `Response`, `ServeOptions`) y los weaves de arranque (`serve`,
+## `default_options`). Los módulos internos (`portus.transport`,
+## `portus.native`, …) no forman parte de la API estable.
+##
+## Ejemplo:
 ##
 ## ```pengu
 ## import portus
 ##
+## weave index with request as ref to portus.Request, response as ref to portus.Response into void:
+##     calling response.set_header with "Content-Type", "text/plain"
+##     calling response.write_text with "hola"
+##     calling response.mark_sent
+##
 ## weave main into int:
-##     return calling portus.ping with 41
+##     let options as portus.ServeOptions is calling portus.default_options
+##     return (calling portus.serve with options, index) or else 0
 ## ```
 ##
-## Estado actual: esqueleto de la fase F0 (paquete instalable + puente C). La
-## API pública objetivo se documenta en `scratch/portus-api.md` y crece por
-## fases; lo que existe hoy es lo que aparece en estas páginas.
-import portus.native
+## ## Memoria
+## Los `string` que devuelven los accesores de `Request` son propios del
+## llamador. El handler corre en el hilo del bucle: si bloquea, bloquea a todos.
 
-## Versión de portus que se está usando.
+import portus.native as native
+import portus.transport
+
+## Versión del paquete.
 const PORTUS_VERSION as string is "0.1.0"
 
-## Comprueba que el puente nativo responde (prueba de humo del paquete).
+## Petición HTTP en curso (vista prestada).
+alias Request as portus.transport.Request
+
+## Respuesta HTTP en construcción.
+alias Response as portus.transport.Response
+
+## Opciones de arranque del servidor.
+alias ServeOptions as portus.transport.ServeOptions
+
+## Opciones por defecto: `127.0.0.1:3000`, 1024 conexiones, 16 KiB de cabeceras,
+## 1 MiB de cuerpo, 60 s de inactividad y keep-alive.
+weave default_options into ServeOptions:
+    return calling portus.transport.base_options
+
+## Arranca el servidor en el puerto indicado y bloquea hasta que muere.
 ##
-## Devuelve `n + 1`. No forma parte de la API pública estable.
+## Si `options.port` es 0 el sistema elige un puerto libre y el resultado lo
+## devuelve. En error, el texto viene de la capa nativa.
+weave serve with options as ServeOptions, handler as weave with request as ref to Request, response as ref to Response into void into result of int to string:
+    return calling portus.transport.serve_loop with options, handler
+
+## Ping de humo del binding nativo (no forma parte de la API de servidor).
 weave ping with n as int into int:
-    return calling portus.native.portus_native_ping with n
+    return calling portus.transport.native_ping with n

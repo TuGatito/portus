@@ -1,0 +1,195 @@
+## Transporte HTTP/1.1 de portus sobre `poll(2)` y llhttp.
+##
+## Envuelve las estructuras opacas del binding (`portus.native`) en dos runes
+## prestados, `Request` y `Response`, y expone `serve`, que bloquea hasta que el
+## proceso muere o el socket no se puede abrir.
+##
+## Un `Request` y un `Response` **solo son válidos durante la llamada al
+## handler**: apuntan a memoria de la conexión y el bucle los reutiliza en la
+## petición siguiente. Si necesitas conservar algo, cópialo (`copy` del string).
+##
+## No hace TLS, HTTP/2, ni atiende dos conexiones a la vez: un handler que se
+## bloquea bloquea a todos. Para escalar, varios procesos (F7).
+##
+## ## Memoria
+## Los `string` que devuelven los accesores son propios del llamador: libéralos
+## con `banish` cuando ya no los necesites.
+
+import portus.native as native
+
+## Copia `count` bytes del transporte a un `string` propio del llamador.
+antiquus _take_bytes with data as ref to frozen char, count as int into string:
+    """
+    return pengu_string_from_cstr_len(data, count);
+    """
+
+## Copia una cadena C terminada en cero a un `string` propio.
+antiquus _take_cstr with data as ref to frozen char into string:
+    """
+    return pengu_string_from_cstr(data);
+    """
+
+## Petición HTTP en curso.
+##
+## Es una vista prestada: no la guardes más allá del handler.
+rune Request:
+    _raw as ref to native.portus_request_t
+
+enchanting Request:
+    ## Devuelve el método (`GET`, `POST`, …), en mayúsculas.
+    ##
+    ## ## Memoria
+    ## El `string` es propio del llamador.
+    weave method into string:
+        var count as int is 0
+        let data as ref to frozen char is calling native.portus_native_request_method_name with self->_raw, sigil of count
+        return calling _take_bytes with data, count
+
+    ## Devuelve la ruta sin query (`/users/7`).
+    ##
+    ## ## Memoria
+    ## El `string` es propio del llamador.
+    weave path into string:
+        var count as int is 0
+        let data as ref to frozen char is calling native.portus_native_request_path with self->_raw, sigil of count
+        return calling _take_bytes with data, count
+
+    ## Devuelve la query sin el `?` (puede ser vacía).
+    ##
+    ## ## Memoria
+    ## El `string` es propio del llamador.
+    weave query into string:
+        var count as int is 0
+        let data as ref to frozen char is calling native.portus_native_request_query with self->_raw, sigil of count
+        return calling _take_bytes with data, count
+
+    ## Devuelve el cuerpo tal cual llegó, como texto.
+    ##
+    ## ## Memoria
+    ## El `string` es propio del llamador.
+    weave body_text into string:
+        var count as int is 0
+        let data as ref to frozen char is calling native.portus_native_request_body with self->_raw, sigil of count
+        if count <= 0:
+            return ""
+        return calling _take_bytes with data, count
+
+    ## Número de cabeceras recibidas.
+    weave header_count into int:
+        return calling native.portus_native_request_header_count with self->_raw
+
+    ## Nombre de la cabecera `index` (0-based).
+    ##
+    ## ## Memoria
+    ## El `string` es propio del llamador.
+    weave header_name with index as int into string:
+        var count as int is 0
+        let data as ref to frozen char is calling native.portus_native_request_header_name with self->_raw, index, sigil of count
+        return calling _take_bytes with data, count
+
+    ## Valor de la cabecera `index` (0-based).
+    ##
+    ## ## Memoria
+    ## El `string` es propio del llamador.
+    weave header_value with index as int into string:
+        var count as int is 0
+        let data as ref to frozen char is calling native.portus_native_request_header_value with self->_raw, index, sigil of count
+        return calling _take_bytes with data, count
+
+    ## `true` si la conexión puede reutilizarse.
+    weave keep_alive into bool:
+        return (calling native.portus_native_request_keep_alive with self->_raw) != 0
+
+    ## Minor de la versión HTTP (0 para HTTP/1.0, 1 para HTTP/1.1).
+    weave http_minor into int:
+        return calling native.portus_native_request_http_minor with self->_raw
+
+    ## 0 si la petición cabe en los límites, 1 si el cuerpo era enorme, 2 si
+    ## lo eran las cabeceras.
+    weave oversized into int:
+        return calling native.portus_native_request_is_oversized with self->_raw
+
+## Respuesta HTTP en construcción.
+##
+## Los bytes se acumulan en la conexión; nada se envía hasta que el handler
+## termina. Llama a `mark_sent` cuando hayas decidido la respuesta: si el
+## handler vuelve sin marcarla, el transporte responde 500.
+rune Response:
+    _raw as ref to native.portus_response_t
+    _sent as bool
+
+enchanting Response:
+    ## Fija el código de estado.
+    weave set_status with status as int into void:
+        calling native.portus_native_response_set_status with self->_raw, status
+
+    ## Fija (o reemplaza) una cabecera.
+    weave set_header with name as string, value as string into void:
+        calling native.portus_native_response_header_bytes with self->_raw, bytes of name, name length, bytes of value, value length
+
+    ## Añade bytes al cuerpo.
+    weave write_bytes with data as ref to frozen byte, count as int into void:
+        calling native.portus_native_response_write_bytes with self->_raw, data, count
+
+    ## Añade texto al cuerpo.
+    weave write_text with text as string into void:
+        calling native.portus_native_response_write_bytes with self->_raw, bytes of text, text length
+
+    ## Marca la respuesta como enviada.
+    weave mark_sent into void:
+        set self->_sent is true
+        calling native.portus_native_response_mark_sent with self->_raw
+
+    ## Código de estado actual.
+    weave status into int:
+        return calling native.portus_native_response_status with self->_raw
+
+## Opciones de arranque del servidor.
+rune ServeOptions:
+    host as string
+    port as int
+    max_connections as int
+    max_header_bytes as int
+    max_body_bytes as int
+    idle_timeout_ms as int
+    keep_alive as bool
+
+## Opciones por defecto: `127.0.0.1:3000`, 1024 conexiones, 16 KiB de cabeceras,
+## 1 MiB de cuerpo, 60 s de inactividad y keep-alive.
+weave base_options into ServeOptions:
+    return with host is "127.0.0.1", port is 3000, max_connections is 1024, max_header_bytes is 16384, max_body_bytes is 1048576, idle_timeout_ms is 60000, keep_alive is true
+
+## Estado que el bucle C pasa de vuelta al handler puente.
+rune _Bridge:
+    handler as weave with request as ref to Request, response as ref to Response into void
+
+## Puente C → PenguScript: convierte los punteros opacos en runes prestados.
+weave _bridge with userdata as ref to void, request as ref to void, response as ref to void into void:
+    let state as ref to _Bridge is transmute userdata to ref to _Bridge
+    var req as Request is with _raw is transmute request to ref to native.portus_request_t
+    var res as Response is with _raw is transmute response to ref to native.portus_response_t, _sent is false
+    calling state->handler with sigil of req, sigil of res
+
+## Arranca el servidor y bloquea hasta que muere.
+##
+## Devuelve el puerto real cuando `options.port` es 0 (puerto efímero): útil en
+## tests. En error devuelve el texto de `portus_last_error`.
+##
+## ## Memoria
+## `options.host` se presta durante la llamada; el resultado está vacío en éxito.
+weave serve_loop with options as ServeOptions, handler as weave with request as ref to Request, response as ref to Response into void into result of int to string:
+    var bridge as _Bridge is with handler is handler
+    var bound as int is 0
+    # `if ... then ... else ...` en posición de valor: la forma multilínea con
+    # dos puntos compila a la rama `else` (bug del compilador, ver
+    # scratch/portus-compiler-fixes.md). Con `then`/`else` es una expresión.
+    let keep as int is if options.keep_alive then 1 else 0
+    let rc as int is calling native.portus_native_serve with bytes of options.host, options.port, options.max_connections, options.max_header_bytes, options.max_body_bytes, options.idle_timeout_ms, keep, _bridge, sigil of bridge, sigil of bound
+    if rc != 0:
+        let message as string is calling _take_cstr with calling native.portus_native_last_error
+        return calling err_of with message
+    return calling ok_of with bound
+
+## Versión de la capa nativa (ping de humo del binding).
+weave native_ping with n as int into int:
+    return calling native.portus_native_ping with n

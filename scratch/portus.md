@@ -177,20 +177,30 @@ Referencias del lenguaje: [`LANGUAGE.es.md`](LANGUAGE.es.md),
 
 ---
 
-## 7. F0 en curso
+## 7. F0 — cerrado
 
 Orden de trabajo (cero deuda técnica: cada cosa se verifica antes de pasar a la
-siguiente):
+siguiente). Todo hecho y verificado:
 
-1. Arreglar los bugs de PenguScript con test de regresión, versión de parche
-   (`0.28.1`, `0.28.2`, …), `CHANGELOG.md` y commit.
+1. Bugs del compilador arreglados con test de regresión, versión de parche y
+   commit: `0.28.1` (`psc add` sin `--name`), `0.28.2` (alias de tipo función),
+   `0.28.3` (mangle de keyword C), `0.28.4` (campo-función), `0.28.5` (API POSIX
+   para el C generado), `0.28.6` (métodos de un tipo reexportado con `alias`).
+   Quedan abiertos el genérico que reenvía `of T` (bug 3), la llamada
+   cualificada que resuelve al símbolo local (bug 8) y los bloques en posición de
+   valor (bug 9, paridad del compilador), todos con workaround y documentados en
+   [`portus-compiler-fixes.md`](portus-compiler-fixes.md).
 2. Guía bilingüe `PenguScript/docs/LIBRARIES.md` / `LIBRARIES.es.md`.
 3. Esqueleto del paquete (`pengu.toml`, `src/portus.pengu`, `src/portus/*`,
-   `include/*.h`) y llhttp vendorizado.
-4. Transporte C con `poll(2)` + llhttp + `portus_native.h`.
-5. `psc add <repo> --trust` en un proyecto limpio y hello world con `curl`.
+   `include/*.h`) y llhttp 9.4.3 vendorizado con `tools/vendor_llhttp.sh`.
+4. Transporte C con `poll(2)` + llhttp (`include/portus_native.h`) y binding
+   Pengu (`src/portus/native.d.pengu`, `src/portus/transport.pengu`).
+5. Gate real: `tests/e2e_hello.sh` — proyecto limpio, `psc add <repo> --trust`
+   sin `--name`, build, HTTP 200 con cuerpo, segunda petición keep-alive.
+   Resultado: `OK e2e hello`.
 
-El progreso real se anota en [`portus-plan.md`](portus-plan.md).
+**Siguiente: F1** (router, contexto, dispatcher, middlewares) según
+[`portus-plan.md`](portus-plan.md).
 
 ---
 
@@ -198,14 +208,23 @@ El progreso real se anota en [`portus-plan.md`](portus-plan.md).
 
 ```
 portus/
-├── LICENSE, README.md, .gitignore, .gitattributes
-├── pengu.toml, pengu/          # andamiaje inicial; F0 lo reemplaza
-└── scratch/                    # todo el trabajo de auditoría y diseño
+├── LICENSE, README.md, THIRD_PARTY.md, .gitignore, .gitattributes
+├── pengu.toml                  # paquete estático (output = "static")
+├── src/
+│   ├── portus.pengu            # fachada pública (alias + serve)
+│   └── portus/
+│       ├── native.d.pengu      # declares del header C
+│       └── transport.pengu     # Request/Response/ServeOptions + puente
+├── include/
+│   ├── portus_native.h         # servidor poll(2) + llhttp, header-only
+│   └── llhttp/                 # llhttp 9.4.3 vendorizado (LICENSE, SOURCE)
+├── tools/vendor_llhttp.sh
+├── tests/e2e_hello.sh          # gate de F0 (instalación + HTTP real)
+└── scratch/                    # auditoría, diseño y planes
     ├── portus.md               # ESTE documento
-    ├── portus-*.md             # 10 documentos
-    ├── spikes/                 # 6 spikes de compilador (evidencia)
-    └── LANGUAGE/PENGUNIC/STDLIB/portus-idea/README
+    ├── portus-*.md             # 11 documentos
+    └── spikes/                 # evidencia de compilador (ignorada por git)
 ```
 
-Los spikes (`scratch/spikes/*.pengu`) e `include/spike_native.h` son pruebas de
-laboratorio; se borran o se mueven a `tools/spikes/` al empezar F0.
+Los spikes (`scratch/spikes/*.pengu`) son pruebas de laboratorio: no forman parte
+del paquete y `scratch/spikes/` está en `.gitignore`.
