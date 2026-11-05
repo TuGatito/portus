@@ -414,6 +414,26 @@ tipo subyacente).
   `tests/e2e_ws.sh` y `tests/e2e_security.sh` verdes, `./examples/run.sh` con
   los 23 `ok`.
 
+### F7 — en curso (endurecimiento y conformidad)
+
+- **WebSocket reescrito** en C para pasar Autobahn: RSV/opcodes/longitud
+  (1002), fragmentación con reensamblado, UTF-8 validado de forma incremental
+  (1007 en cuanto aparece un byte inválido), códigos de cierre válidos con eco,
+  ping/pong y tope de 1 MiB (1009).
+- **Gate Autobahn** (`tests/autobahn.sh`): servidor de eco en
+  `tests/autobahn/server`; `1.* 2.* 3.* 4.* 5.* 6.* 7.* 8.* 10.* 12.* 13.*`
+  → **463 casos, 0 fallos, 3 non-strict**. `9.*` (mensajes de 4–16 MB) queda
+  fuera del gate porque choca con el tope de 1 MiB y Autobahn lo clasifica
+  como rendimiento.
+- **CI** (`.github/workflows/ci.yml`): matriz ubuntu/macos con
+  `psc test`, `psc fmt --check`, los tres e2e y `./examples/run.sh`; job
+  `autobahn` que instala `wstest` (micromamba + Python 2.7) y corre el gate.
+- **0.1.1** en `CHANGELOG.md`, `pengu.toml` y `PORTUS_VERSION`.
+- Requisito de compilador: **PenguScript ≥ 0.29.1**. 0.29.0 rompía `psc test`
+  en la std (`if` en posición de valor, genéricas inferidas y literales de
+  omen); la 0.29.1 los arregla (ver `scratch/portus-compiler-fixes.md`,
+  bugs 22–26).
+
 ## 8. Estado del repositorio
 
 ```

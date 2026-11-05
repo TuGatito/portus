@@ -1,0 +1,103 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # Rama o tag de PenguScript con el que se prueba portus. Un tag concreto
+  # (p. ej. v0.29.0) es más reproducible; `main` avisa antes de que rompa.
+  PENGU_REF: "${{ vars.PENGU_REF || 'main' }}"
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar dependencias del sistema (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential curl python3
+
+      - name: Traer PenguScript
+        run: |
+          git clone --depth 1 --branch "$PENGU_REF" \
+            https://github.com/TuGatito/PenguScript.git "$RUNNER_TEMP/pengu"
+
+      - name: Construir PenguScript
+        run: |
+          cd "$RUNNER_TEMP/pengu"
+          ./tools/build.sh --no-wasm --no-register
+          "$RUNNER_TEMP/pengu/build/psc" version
+
+      - name: Tests unitarios
+        run: $RUNNER_TEMP/pengu/build/psc test
+
+      - name: Formato
+        run: $RUNNER_TEMP/pengu/build/psc fmt --check src
+
+      - name: Gates e2e
+        env:
+          PSC: "${{ runner.temp }}/pengu/build/psc"
+          PENGU_HOME: "${{ runner.temp }}/pengu"
+        run: |
+          bash tests/e2e_hello.sh
+          bash tests/e2e_ws.sh
+          bash tests/e2e_security.sh
+
+      - name: Ejemplos
+        env:
+          PSC: "${{ runner.temp }}/pengu/build/psc"
+          PENGU_HOME: "${{ runner.temp }}/pengu"
+        run: ./examples/run.sh
+
+      - name: Documentación de API al día
+        run: |
+          $RUNNER_TEMP/pengu/build/psc doc
+          git diff --exit-code -- docs/
+
+  autobahn:
+    name: autobahn (websocket)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar dependencias del sistema
+        run: sudo apt-get update && sudo apt-get install -y build-essential curl python3 bzip2
+
+      - name: Traer PenguScript
+        run: |
+          git clone --depth 1 --branch "$PENGU_REF" \
+            https://github.com/TuGatito/PenguScript.git "$RUNNER_TEMP/pengu"
+          cd "$RUNNER_TEMP/pengu"
+          ./tools/build.sh --no-wasm --no-register
+          "$RUNNER_TEMP/pengu/build/psc" version
+
+      # wstest sólo existe para Python 2.7: se instala en un entorno aparte con
+      # micromamba (sin root) y se reutiliza entre ejecuciones.
+      - name: Instalar Autobahn TestSuite (wstest)
+        run: |
+          mkdir -p "$RUNNER_TEMP/ab"
+          cd "$RUNNER_TEMP/ab"
+          curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj bin/micromamba
+          ./bin/micromamba create -y -p "$RUNNER_TEMP/ab/env" -c conda-forge python=2.7 pip
+          ./bin/micromamba run -p "$RUNNER_TEMP/ab/env" python -m pip install -q "pip<21" setuptools wheel
+          ./bin/micromamba run -p "$RUNNER_TEMP/ab/env" python -m pip install -q autobahntestsuite
+          "$RUNNER_TEMP/ab/env/bin/wstest" --version
+
+      - name: Autobahn
+        env:
+          PSC: "${{ runner.temp }}/pengu/build/psc"
+          PENGU_HOME: "${{ runner.temp }}/pengu"
+          WSTEST: "${{ runner.temp }}/ab/env/bin/wstest"
+        run: ./tests/autobahn.sh

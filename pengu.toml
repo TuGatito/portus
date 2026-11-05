@@ -6,7 +6,7 @@
 # (header-only), de modo que no hay nada que enlazar a mano.
 [project]
 name = "portus"
-version = "0.1.0"
+version = "0.1.1"
 entry = "src/portus.pengu"
 output = "static"
 

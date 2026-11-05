@@ -1,12 +1,14 @@
 # Portus — Arreglos necesarios en PenguScript
 
 > Bugs del compilador que portus encontró. Todos están confirmados con una
-> reproducción mínima. Estado a 2026-11-04: **1–7, 11, 12 y 21 arreglados** y
-> publicados en 0.28.1–0.28.9; **3, 8, 9, 10, 14, 15, 19 y 20 abiertos**
-> (portus usa workarounds); 13 resultó ser otra cara de 15 y no se reproduce
-> con el receptor en un local; 16–20 son hallazgos de F3–F5.
+> reproducción mínima. Estado a 2026-11-04: **1–7, 11, 12, 21 y 23–26
+> arreglados** y publicados en 0.28.1–0.29.1; **8, 9, 10, 14, 15, 16, 17, 18,
+> 19 y 20 los arregla 0.29.0/0.29.1** (comprobado con `psc test` y las
+> regresiones de portus); 13 resultó ser otra cara de 15 y no se reproduce con
+> el receptor en un local; 16–20 son hallazgos de F3–F5; 22 es del propio
+> bootstrap del compilador.
 >
-> Checkout: `/home/tugatito/Documentos/GitHub/PenguScript` (v0.28.8, `build/psc`).
+> Checkout: `/home/tugatito/Documentos/GitHub/PenguScript` (v0.29.1, `build/psc`).
 > Cada arreglo lleva su test en `tests/regress_*.sh`, su entrada en `CHANGELOG.md`
 > y su bump de versión en todos los documentos.
 
@@ -37,6 +39,11 @@
 | 19 | P1 | Un `or:` tras una llamada se liga al último argumento y pasa `NULL` | parser (postfijos) | abierto | enlazar el resultado |
 | 20 | P2 | La caché de `psc build` ignora cambios en headers C | driver (caché) | abierto | `--no-cache` tras tocar headers |
 | 21 | **P0** | `psc add` de una dependencia `path` copia `lib/`/`build/` (recursión, disco lleno) y `upsert` duplica `[dependencies]` | `src/psc/pkg/source.pengu`, `src/psc/pkg/manifest.pengu` | 0.28.9 | ya no hace falta |
+| 22 | P1 | Dentro del compilador, un nombre suelto resuelve a otra función homónima (`has_type_param` de `sema/types/compat`) | `src/psc/codegen/generics.pengu` | 0.29.1 | calificar `catalog.` |
+| 23 | P1 | `if c then a else b`: el `else` se bajaba un nivel y perdía `to string` / `some` | `src/psc/codegen/expr.pengu` (`if_expr_expected`) | 0.29.1 | ya no hace falta |
+| 24 | P1 | Llamada genérica sin `of T` en el mismo módulo de la plantilla emitía el nombre base | `src/psc/codegen/expr.pengu` | 0.29.1 | ya no hace falta |
+| 25 | P1 | `return with Variante is campo` no cerraba el literal compuesto del omen | `src/psc/codegen/expr.pengu` (`omen_init_expr`) | 0.29.1 | ya no hace falta |
+| 26 | P2 | `calling f of T` podía pisarse con `by_name` de otro módulo | `src/psc/codegen/expr.pengu` | 0.29.1 | ya no hace falta |
 
 ---
 

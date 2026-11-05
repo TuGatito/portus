@@ -17,3 +17,4 @@ lib/
 
 # Evidencia de la auditoría (repros sueltos, no forman parte del paquete)
 scratch/spikes/
+tests/autobahn/reports/

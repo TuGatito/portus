@@ -3,6 +3,35 @@
 Todas las versiones notables de portus. Formato basado en [Keep a
 Changelog](https://keepachangelog.com/es-ES/1.1.0/) y versionado semántico.
 
+## [0.1.1] — 2026-11-04
+
+Conformidad WebSocket con Autobahn TestSuite: **463 casos, 0 fallos** (3
+non-strict en `6.4.2`–`6.4.4`, aceptados por la propia suite). No cambia la API
+pública de PenguScript; sí el comportamiento del servidor ante frames raros.
+
+### Corregido
+
+- **Fragmentación (5.x)**: `portus_ws_consume` reensambla mensajes fragmentados
+  (`0x1`/`0x2` abren, `0x0` continúa) con tope de 1 MiB; los frames de control
+  se procesan entre fragmentos.
+- **UTF-8 (6.x)**: validador incremental por conexión; texto inválido cierra con
+  `1007` en cuanto aparece, también al final de un mensaje incompleto; el motivo
+  de cierre no UTF-8 también es `1007`.
+- **Códigos de cierre (7.x)**: se valida el código recibido (1000–1003,
+  1007–1011, 3000–4999; payload de 1 byte → `1002`) y se **hace eco del mismo
+  código** en vez de responder siempre `1000`.
+- **Bits RSV y control frames (3.x, 2.5)**: `rsv != 0`, control con `FIN=0` o
+  payload > 125 → `1002`.
+- **Límites (10.x)**: longitud de 64 bits con el bit alto puesto → `1002`;
+  mensaje mayor de 1 MiB → `1009`; sin máscara → `1002`.
+
+### Añadido
+
+- `tests/autobahn.sh` y `tests/autobahn/server` (servidor de eco): gate de
+  conformidad WebSocket reproducible con `wstest`.
+- Job `autobahn` en `.github/workflows/ci.yml`, que instala `wstest` en un
+  entorno Python 2.7 con micromamba (sin root).
+
 ## [0.1.0] — 2026-11-04
 
 Primera versión completa: el mismo terreno que Express.js y Hono.js, en

@@ -93,14 +93,24 @@ src/portus/*.pengu      módulos (router, contexto, middlewares, sesiones, ws…
 include/portus_native.h servidor poll(2) + llhttp, header-only
 include/llhttp/         llhttp 9.4.3 vendorizado (MIT, ver THIRD_PARTY.md)
 examples/               23 ejemplos ejecutables
-tests/                  e2e de HTTP, WebSocket y seguridad
+tests/                  e2e de HTTP, WebSocket, seguridad y Autobahn
 docs/api/               API generada con `psc doc`
 scratch/                auditoría, diseño, plan y bugs del compilador
 ```
 
+## Pruebas
+
+```sh
+PSC=/ruta/a/psc ./examples/run.sh     # 23 ejemplos
+PSC=/ruta/a/psc bash tests/e2e_hello.sh
+PSC=/ruta/a/psc bash tests/e2e_ws.sh
+PSC=/ruta/a/psc bash tests/e2e_security.sh
+PSC=/ruta/a/psc WSTEST=/ruta/a/wstest ./tests/autobahn.sh   # conformidad WS
+```
+
 ## Estado
 
-F1–F5 cerrados y commiteados; F6 (ejemplos, docs y release) en curso.
+F0–F6 cerrados y etiquetados (`v0.1.0`); F7 (TLS nativo y escalado) en curso.
 El diseño, las decisiones aprobadas y las limitaciones conocidas están en
 [`scratch/portus.md`](scratch/portus.md). Lo que se aplaza (hilos, TLS nativo,
 HTTP/2, wasm…) en [`scratch/portus-deferred.md`](scratch/portus-deferred.md).

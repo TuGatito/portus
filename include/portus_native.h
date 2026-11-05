@@ -60,6 +60,8 @@ static PORTUS_MAYBE_UNUSED int portus_native_random_hex(unsigned char *out, int 
 #define PORTUS_DEFAULT_MAX_BODY_BYTES (1024 * 1024)
 #define PORTUS_DEFAULT_IDLE_TIMEOUT_MS 60000
 #define PORTUS_DEFAULT_REQUEST_TIMEOUT_MS 30000
+/* Tamaño máximo de un mensaje WebSocket completo (RFC 6455 §7.4.1: 1009). */
+#define PORTUS_WS_MAX_MESSAGE (1024u * 1024u)
 #define PORTUS_READ_CHUNK 16384
 
 /* Códigos de error de la capa nativa. */
@@ -157,6 +159,15 @@ typedef struct portus_conn {
     portus_ws_fn ws_cb;
     void *ws_data;
     int ws_closed;
+    /* Mensaje WebSocket en construcción (fragmentos). */
+    unsigned char *ws_msg;
+    size_t ws_msg_len;
+    size_t ws_msg_cap;
+    int ws_msg_opcode;
+    /* Estado del validador UTF-8 incremental (texto fragmentado). */
+    int ws_utf8_need;
+    unsigned int ws_utf8_cp;
+    unsigned int ws_utf8_min;
 } portus_conn;
 
 /* Adelanto: el streaming necesita vaciar la conexión. */
@@ -949,11 +960,156 @@ static PORTUS_MAYBE_UNUSED int portus_ws_send_frame(portus_conn *c, int opcode,
     return portus_conn_flush(c);
 }
 
+/* ¿Es `s` (de `len` bytes) UTF-8 válido? RFC 3629. */
+static PORTUS_MAYBE_UNUSED int portus_ws_utf8_valid(const unsigned char *s, size_t len) {
+    size_t i = 0;
+    while (i < len) {
+        unsigned char b = s[i];
+        unsigned int cp;
+        int extra;
+        int k;
+        if (b < 0x80) {
+            i++;
+            continue;
+        } else if ((b & 0xE0) == 0xC0) {
+            cp = (unsigned int)(b & 0x1Fu);
+            extra = 1;
+        } else if ((b & 0xF0) == 0xE0) {
+            cp = (unsigned int)(b & 0x0Fu);
+            extra = 2;
+        } else if ((b & 0xF8) == 0xF0) {
+            cp = (unsigned int)(b & 0x07u);
+            extra = 3;
+        } else {
+            return 0;
+        }
+        if (len - i <= (size_t)extra) {
+            return 0;
+        }
+        for (k = 1; k <= extra; k++) {
+            unsigned char cc = s[i + (size_t)k];
+            if ((cc & 0xC0) != 0x80) {
+                return 0;
+            }
+            cp = (cp << 6) | (unsigned int)(cc & 0x3Fu);
+        }
+        if (extra == 1 && cp < 0x80u) {
+            return 0;
+        }
+        if (extra == 2 && cp < 0x800u) {
+            return 0;
+        }
+        if (extra == 3 && cp < 0x10000u) {
+            return 0;
+        }
+        if (cp >= 0xD800u && cp <= 0xDFFFu) {
+            return 0;
+        }
+        if (cp > 0x10FFFFu) {
+            return 0;
+        }
+        i += (size_t)extra + 1;
+    }
+    return 1;
+}
+
+/* Alimenta el validador UTF-8 incremental; 0 si el flujo ya es inválido. */
+static PORTUS_MAYBE_UNUSED int portus_ws_utf8_feed(portus_conn *c, const unsigned char *s,
+                                                   size_t len) {
+    size_t i;
+    for (i = 0; i < len; i++) {
+        unsigned char b = s[i];
+        if (c->ws_utf8_need > 0) {
+            if ((b & 0xC0) != 0x80) {
+                return 0;
+            }
+            c->ws_utf8_cp = (c->ws_utf8_cp << 6) | (unsigned int)(b & 0x3Fu);
+            c->ws_utf8_need--;
+            if (c->ws_utf8_need == 0) {
+                if (c->ws_utf8_cp < c->ws_utf8_min) {
+                    return 0;
+                }
+                if (c->ws_utf8_cp >= 0xD800u && c->ws_utf8_cp <= 0xDFFFu) {
+                    return 0;
+                }
+                if (c->ws_utf8_cp > 0x10FFFFu) {
+                    return 0;
+                }
+            }
+            continue;
+        }
+        if (b < 0x80) {
+            continue;
+        } else if (b >= 0xC2 && b <= 0xDF) {
+            c->ws_utf8_need = 1;
+            c->ws_utf8_cp = (unsigned int)(b & 0x1Fu);
+            c->ws_utf8_min = 0x80u;
+        } else if (b >= 0xE0 && b <= 0xEF) {
+            c->ws_utf8_need = 2;
+            c->ws_utf8_cp = (unsigned int)(b & 0x0Fu);
+            c->ws_utf8_min = 0x800u;
+        } else if (b >= 0xF0 && b <= 0xF4) {
+            c->ws_utf8_need = 3;
+            c->ws_utf8_cp = (unsigned int)(b & 0x07u);
+            c->ws_utf8_min = 0x10000u;
+        } else {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* Cierra el WebSocket con `code` y un motivo corto. */
+static PORTUS_MAYBE_UNUSED void portus_ws_fail(portus_conn *c, int code, const char *reason) {
+    unsigned char payload[125];
+    size_t n = 2;
+    payload[0] = (unsigned char)((code >> 8) & 0xFF);
+    payload[1] = (unsigned char)(code & 0xFF);
+    if (reason != NULL) {
+        size_t rl = strlen(reason);
+        if (rl > sizeof(payload) - 2) {
+            rl = sizeof(payload) - 2;
+        }
+        memcpy(payload + 2, reason, rl);
+        n += rl;
+    }
+    (void)portus_ws_send_frame(c, 0x8, payload, (int)n);
+    c->ws_closed = 1;
+    c->close_after_write = 1;
+}
+
+/* Devuelve 0 si el mensaje ya es demasiado grande (1009). */
+static PORTUS_MAYBE_UNUSED int portus_ws_msg_append(portus_conn *c, const unsigned char *data,
+                                                    size_t len) {
+    size_t need;
+    if (len > PORTUS_WS_MAX_MESSAGE || c->ws_msg_len > PORTUS_WS_MAX_MESSAGE - len) {
+        return 0;
+    }
+    need = c->ws_msg_len + len;
+    if (need > c->ws_msg_cap) {
+        size_t cap = c->ws_msg_cap == 0 ? 4096 : c->ws_msg_cap;
+        unsigned char *nb;
+        while (cap < need) {
+            cap *= 2;
+        }
+        nb = (unsigned char *)realloc(c->ws_msg, cap);
+        if (nb == NULL) {
+            return 0;
+        }
+        c->ws_msg = nb;
+        c->ws_msg_cap = cap;
+    }
+    memcpy(c->ws_msg + c->ws_msg_len, data, len);
+    c->ws_msg_len += len;
+    return 1;
+}
+
 /* Procesa los frames completos que haya en `c->in`. */
 static PORTUS_MAYBE_UNUSED void portus_ws_consume(portus_conn *c) {
     while (c->in.len >= 2) {
         unsigned char *p = (unsigned char *)c->in.data;
         int fin = (p[0] & 0x80) != 0;
+        int rsv = p[0] & 0x70;
         int opcode = p[0] & 0x0F;
         int masked = (p[1] & 0x80) != 0;
         unsigned long long len = (unsigned long long)(p[1] & 0x7F);
@@ -961,6 +1117,29 @@ static PORTUS_MAYBE_UNUSED void portus_ws_consume(portus_conn *c) {
         unsigned char mask[4];
         unsigned char *payload;
         int i;
+        int is_control = opcode >= 0x8;
+
+        if (rsv != 0) {
+            portus_ws_fail(c, 1002, "rsv");
+            return;
+        }
+        if (opcode != 0x0 && opcode != 0x1 && opcode != 0x2 && opcode != 0x8 && opcode != 0x9 &&
+            opcode != 0xA) {
+            portus_ws_fail(c, 1002, "opcode");
+            return;
+        }
+        if (is_control && (!fin || (p[1] & 0x7F) > 125)) {
+            portus_ws_fail(c, 1002, "control frame");
+            return;
+        }
+        if (opcode == 0x0 && c->ws_msg_opcode == 0) {
+            portus_ws_fail(c, 1002, "continuation");
+            return;
+        }
+        if ((opcode == 0x1 || opcode == 0x2) && c->ws_msg_opcode != 0) {
+            portus_ws_fail(c, 1002, "new message inside fragment");
+            return;
+        }
         if (len == 126) {
             if (c->in.len < 4) {
                 return;
@@ -971,6 +1150,10 @@ static PORTUS_MAYBE_UNUSED void portus_ws_consume(portus_conn *c) {
             if (c->in.len < 10) {
                 return;
             }
+            if ((p[2] & 0x80) != 0) {
+                portus_ws_fail(c, 1002, "length");
+                return;
+            }
             len = 0;
             for (i = 2; i < 10; i++) {
                 len = (len << 8) | p[i];
@@ -978,68 +1161,124 @@ static PORTUS_MAYBE_UNUSED void portus_ws_consume(portus_conn *c) {
             off = 10;
         }
         if (!masked) {
-            /* El cliente debe enmascarar: cerramos. */
-            c->close_after_write = 1;
-            break;
+            /* El cliente debe enmascarar: 1002. */
+            portus_ws_fail(c, 1002, "unmasked");
+            return;
         }
         if (c->in.len < off + 4) {
             return;
         }
         memcpy(mask, p + off, 4);
         off += 4;
-        if (len > 1024u * 1024u) {
-            c->close_after_write = 1;
-            break;
+        if (len > (unsigned long long)PORTUS_WS_MAX_MESSAGE) {
+            portus_ws_fail(c, 1009, "too big");
+            return;
         }
         if (c->in.len < off + (size_t)len) {
             return;
         }
         payload = (unsigned char *)malloc((size_t)len + 1);
         if (payload == NULL) {
-            c->close_after_write = 1;
-            break;
+            portus_ws_fail(c, 1011, "oom");
+            return;
         }
         for (i = 0; i < (int)len; i++) {
             payload[i] = (unsigned char)(p[off + (size_t)i] ^ mask[i % 4]);
         }
         payload[len] = 0;
-        if (!fin) {
-            /* Sin fragmentación en v1: cerramos con 1003. */
-            unsigned char close_payload[2];
-            close_payload[0] = 0x03;
-            close_payload[1] = 0xEB;
-            (void)portus_ws_send_frame(c, 0x8, close_payload, 2);
-            c->close_after_write = 1;
-            free(payload);
-            break;
-        }
+
+        /* Control: se procesan en medio de un mensaje fragmentado. */
         if (opcode == 0x8) {
-            unsigned char close_payload[2];
-            close_payload[0] = 0x03;
-            close_payload[1] = 0xE8;
-            (void)portus_ws_send_frame(c, 0x8, close_payload, 2);
+            int code = 1000;
+            if (len == 1) {
+                free(payload);
+                portus_ws_fail(c, 1002, "close payload");
+                return;
+            }
+            if (len >= 2) {
+                code = ((int)payload[0] << 8) | (int)payload[1];
+                if (code < 1000 || code == 1004 || code == 1005 || code == 1006 || code == 1015 ||
+                    (code >= 1016 && code <= 2999)) {
+                    free(payload);
+                    portus_ws_fail(c, 1002, "close code");
+                    return;
+                }
+                if (len > 2 && !portus_ws_utf8_valid(payload + 2, (size_t)len - 2)) {
+                    free(payload);
+                    portus_ws_fail(c, 1007, "close reason");
+                    return;
+                }
+            }
+            {
+                unsigned char echo[2];
+                echo[0] = (unsigned char)((code >> 8) & 0xFF);
+                echo[1] = (unsigned char)(code & 0xFF);
+                (void)portus_ws_send_frame(c, 0x8, echo, 2);
+            }
             c->ws_closed = 1;
             c->close_after_write = 1;
             if (c->ws_cb != NULL) {
                 c->ws_cb(c->ws_data, (void *)&c->response, 8, payload, (int)len);
             }
-        } else if (opcode == 0x9) {
+            free(payload);
+            memmove(c->in.data, c->in.data + off + (size_t)len,
+                    c->in.len - (off + (size_t)len));
+            c->in.len -= off + (size_t)len;
+            return;
+        }
+        if (opcode == 0x9) {
             (void)portus_ws_send_frame(c, 0xA, payload, (int)len);
-        } else if (opcode == 0xA) {
-            /* pong: ignorar */
-        } else if (opcode == 0x1 || opcode == 0x2) {
-            if (c->ws_cb != NULL) {
-                c->ws_cb(c->ws_data, (void *)&c->response, opcode, payload, (int)len);
-            }
-        } else {
-            c->close_after_write = 1;
+            free(payload);
+            memmove(c->in.data, c->in.data + off + (size_t)len,
+                    c->in.len - (off + (size_t)len));
+            c->in.len -= off + (size_t)len;
+            continue;
+        }
+        if (opcode == 0xA) {
+            free(payload);
+            memmove(c->in.data, c->in.data + off + (size_t)len,
+                    c->in.len - (off + (size_t)len));
+            c->in.len -= off + (size_t)len;
+            continue;
+        }
+
+        /* Datos: 0x1/0x2 abren mensaje, 0x0 continúa. */
+        if (opcode == 0x1 || opcode == 0x2) {
+            c->ws_msg_opcode = opcode;
+            c->ws_msg_len = 0;
+            c->ws_utf8_need = 0;
+            c->ws_utf8_cp = 0;
+            c->ws_utf8_min = 0;
+        }
+        if (c->ws_msg_opcode == 0x1 && !portus_ws_utf8_feed(c, payload, (size_t)len)) {
+            free(payload);
+            portus_ws_fail(c, 1007, "utf8");
+            return;
+        }
+        if (!portus_ws_msg_append(c, payload, (size_t)len)) {
+            free(payload);
+            portus_ws_fail(c, 1009, "message too big");
+            return;
         }
         free(payload);
         memmove(c->in.data, c->in.data + off + (size_t)len,
                 c->in.len - (off + (size_t)len));
         c->in.len -= off + (size_t)len;
+        if (!fin) {
+            continue;
+        }
+        if (c->ws_msg_opcode == 0x1 && c->ws_utf8_need != 0) {
+            portus_ws_fail(c, 1007, "utf8");
+            return;
+        }
+        if (c->ws_cb != NULL) {
+            c->ws_cb(c->ws_data, (void *)&c->response, c->ws_msg_opcode, c->ws_msg,
+                     (int)c->ws_msg_len);
+        }
+        c->ws_msg_len = 0;
+        c->ws_msg_opcode = 0;
         if (c->ws_closed || c->close_after_write) {
-            break;
+            return;
         }
     }
 }
@@ -1101,7 +1340,6 @@ static PORTUS_MAYBE_UNUSED int portus_native_ws_upgrade(void *res, portus_ws_fn 
     return 0;
 }
 
-/* Envía un texto por el WebSocket. */
 static PORTUS_MAYBE_UNUSED int portus_native_ws_send(void *res, int opcode,
                                                      const unsigned char *data, int len) {
     struct portus_response *r = (struct portus_response *)res;
@@ -1129,6 +1367,15 @@ static PORTUS_MAYBE_UNUSED void portus_conn_reset_request(struct portus_conn *c)
 }
 
 static PORTUS_MAYBE_UNUSED void portus_conn_close(struct portus_conn *c) {
+    if (c->ws_msg != NULL) {
+        free(c->ws_msg);
+        c->ws_msg = NULL;
+        c->ws_msg_len = 0;
+        c->ws_msg_cap = 0;
+    }
+    c->ws_utf8_need = 0;
+    c->ws_utf8_cp = 0;
+    c->ws_utf8_min = 0;
     if (c->active && c->fd >= 0) {
         close(c->fd);
     }

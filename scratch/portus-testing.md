@@ -105,9 +105,20 @@ Qué se cubre aquí y no en integración:
 
 ## 5. Conformidad
 
-- **WebSocket:** Autobahn `fuzzingclient` (Docker) contra `/ws`. Se aceptan los
-  casos 1.x, 2.x, 5.x, 6.x, 7.x; `permessage-deflate` queda fuera y se documenta
-  como `unimplemented` en el reporte.
+- **WebSocket:** Autobahn `fuzzingclient` contra `tests/autobahn/server`
+  (proyecto de eco) con `tests/autobahn.sh`. Gate por defecto:
+  `1.* 2.* 3.* 4.* 5.* 6.* 7.* 8.* 10.* 12.* 13.*`.
+  - Resultado de referencia (2026-11-04, portus 0.1.1): **463 casos, 0 fallos,
+    3 non-strict** (`6.4.2`–`6.4.4`, que premian fallar a mitad de mensaje;
+    Autobahn los clasifica como laxitud permitida).
+  - `9.*` (rendimiento, mensajes de 4–16 MB) **no entra en el gate**: portus
+    limita el mensaje a 1 MiB y cierra con 1009; Autobahn lo marca como fallo
+    porque espera el eco completo.
+  - `permessage-deflate` no se negocia (12.x/13.x pasan por no ofrecerlo).
+  - Instalación de `wstest` (sólo Python 2.7, sin root): micromamba + entorno
+    py2.7 + `pip install autobahntestsuite`; en CI lo hace el job `autobahn`.
+  - El script refresca `lib/portus` cuando `include/portus_native.h` es más
+    nuevo (la dependencia es una copia).
 - **HTTP:** no hay suite oficial ligera; se usan los e2e + una tabla de casos
   raros (cabecera duplicada, `Content-Length` mentiroso, `Transfer-Encoding:
   chunked` + `Content-Length` a la vez → 400, `Expect: 100-continue`).
