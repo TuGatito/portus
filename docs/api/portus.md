@@ -379,6 +379,15 @@ _Undocumented._
 
 _Undocumented._
 
+### `tls_available`
+
+> **tls_available**() -> int
+
+ 1 si el sistema tiene TLS disponible (OpenSSL cargado por dlopen).
+
+ ## Retorno
+ `1` con TLS; `0` si no hay OpenSSL visible. Infallible.
+
 ### `WebSocketConn`
 
 > alias WebSocketConn

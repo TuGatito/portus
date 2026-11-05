@@ -43,6 +43,7 @@ static PORTUS_MAYBE_UNUSED int portus_native_random_hex(unsigned char *out, int 
 #include <poll.h>
 #include <signal.h>
 #include <strings.h>
+#include <dlfcn.h>
 #include <sys/socket.h>
 #include <strings.h>
 #include <sys/stat.h>
@@ -304,6 +305,79 @@ static PORTUS_MAYBE_UNUSED int portus_headers_push(portus_header **list, size_t 
 /* ------------------------------------------------------------------ */
 /* Tiempo                                                              */
 /* ------------------------------------------------------------------ */
+
+/* TLS opcional por dlopen.
+ *
+ * El paquete es header-only: no enlazamos OpenSSL para no obligar al
+ * consumidor a -lssl. Si la biblioteca existe cargamos los simbolos que
+ * necesitamos; si no, `tls_available` devuelve 0 y el servidor va en claro.
+ */
+typedef void *portus_tls_ctx;
+typedef void *portus_tls_ssl;
+typedef void *(*portus_fn_tls_method)(void);
+typedef portus_tls_ctx (*portus_fn_ctx_new)(const void *);
+typedef void (*portus_fn_ctx_free)(portus_tls_ctx);
+typedef int (*portus_fn_use_cert)(portus_tls_ctx, const char *, int);
+typedef int (*portus_fn_use_key)(portus_tls_ctx, const char *, int, void *);
+typedef portus_tls_ssl (*portus_fn_ssl_new)(portus_tls_ctx);
+typedef void (*portus_fn_ssl_free)(portus_tls_ssl);
+typedef int (*portus_fn_set_fd)(portus_tls_ssl, int);
+typedef int (*portus_fn_accept)(portus_tls_ssl);
+
+struct portus_tls_ops {
+    void *ssl_handle;
+    portus_fn_tls_method server_method;
+    portus_fn_ctx_new ctx_new;
+    portus_fn_ctx_free ctx_free;
+    portus_fn_use_cert use_cert;
+    portus_fn_use_key use_key;
+    portus_fn_ssl_new ssl_new;
+    portus_fn_ssl_free ssl_free;
+    portus_fn_set_fd set_fd;
+    portus_fn_accept accept;
+    int loaded;
+};
+
+static PORTUS_MAYBE_UNUSED int portus_tls_load(struct portus_tls_ops *ops)
+{
+    if (ops->loaded)
+        return ops->ssl_handle != NULL;
+    ops->loaded = 1;
+    ops->ssl_handle = dlopen("libssl.so.3", RTLD_NOW | RTLD_LOCAL);
+    if (!ops->ssl_handle)
+        ops->ssl_handle = dlopen("libssl.so", RTLD_NOW | RTLD_LOCAL);
+    if (!ops->ssl_handle)
+        ops->ssl_handle = dlopen("libssl.3.dylib", RTLD_NOW | RTLD_LOCAL);
+    if (!ops->ssl_handle)
+        ops->ssl_handle = dlopen("libssl.dylib", RTLD_NOW | RTLD_LOCAL);
+    if (!ops->ssl_handle)
+        return 0;
+    ops->server_method = (portus_fn_tls_method)dlsym(ops->ssl_handle, "TLS_server_method");
+    ops->ctx_new = (portus_fn_ctx_new)dlsym(ops->ssl_handle, "SSL_CTX_new");
+    ops->ctx_free = (portus_fn_ctx_free)dlsym(ops->ssl_handle, "SSL_CTX_free");
+    ops->use_cert = (portus_fn_use_cert)dlsym(ops->ssl_handle, "SSL_CTX_use_certificate_file");
+    ops->use_key = (portus_fn_use_key)dlsym(ops->ssl_handle, "SSL_CTX_use_PrivateKey_file");
+    ops->ssl_new = (portus_fn_ssl_new)dlsym(ops->ssl_handle, "SSL_new");
+    ops->ssl_free = (portus_fn_ssl_free)dlsym(ops->ssl_handle, "SSL_free");
+    ops->set_fd = (portus_fn_set_fd)dlsym(ops->ssl_handle, "SSL_set_fd");
+    ops->accept = (portus_fn_accept)dlsym(ops->ssl_handle, "SSL_accept");
+    if (!ops->server_method || !ops->ctx_new || !ops->ctx_free || !ops->use_cert
+        || !ops->use_key || !ops->ssl_new || !ops->ssl_free || !ops->set_fd
+        || !ops->accept) {
+        dlclose(ops->ssl_handle);
+        ops->ssl_handle = NULL;
+        return 0;
+    }
+    return 1;
+}
+
+/* 1 si hay TLS disponible en el sistema (OpenSSL via dlopen). */
+static PORTUS_MAYBE_UNUSED int portus_native_tls_available(void)
+{
+    struct portus_tls_ops ops;
+    memset(&ops, 0, sizeof(ops));
+    return portus_tls_load(&ops);
+}
 
 static PORTUS_MAYBE_UNUSED unsigned long long portus_now_ms(void) {
 #if defined(PORTUS_NATIVE_WINDOWS)

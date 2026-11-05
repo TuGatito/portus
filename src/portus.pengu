@@ -224,6 +224,13 @@ weave mount_static with app as ref to application_module.Application, prefix as 
 weave ping with n as int into int:
     return calling transport.native_ping with n
 
+## 1 si el sistema tiene TLS disponible (OpenSSL cargado por dlopen).
+##
+## ## Retorno
+## `1` con TLS; `0` si no hay OpenSSL visible. Infallible.
+weave tls_available into int:
+    return calling native.portus_native_tls_available
+
 # --- WebSocket ------------------------------------------------------------
 
 import portus.websocket as websocket_module

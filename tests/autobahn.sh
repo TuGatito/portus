@@ -36,8 +36,12 @@ export PENGU_HOME="${PENGU_HOME:-$(cd "$(dirname "$PSC")/.." && pwd)}"
 tmp="${OUT:-$(mktemp -d)}"
 mkdir -p "$tmp"
 server_pid=""
+port_backup="$(mktemp)"
+cp "$SERVER_DIR/src/main.pengu" "$port_backup"
 cleanup() {
     [ -n "$server_pid" ] && kill "$server_pid" 2>/dev/null
+    cp "$port_backup" "$SERVER_DIR/src/main.pengu" 2>/dev/null
+    rm -f "$port_backup"
     [ -n "${OUT:-}" ] || rm -rf "$tmp"
 }
 trap cleanup EXIT

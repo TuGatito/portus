@@ -429,6 +429,16 @@ tipo subyacente).
   `psc test`, `psc fmt --check`, los tres e2e y `./examples/run.sh`; job
   `autobahn` que instala `wstest` (micromamba + Python 2.7) y corre el gate.
 - **0.1.1** en `CHANGELOG.md`, `pengu.toml` y `PORTUS_VERSION`.
+- **TLS (F7.1) — decisión**: el paquete es header-only y no puede obligar al
+  consumidor a `-lssl`, así que OpenSSL se carga con `dlopen` en tiempo de
+  ejecución (`libssl.so.3` / `libssl.so` / `libssl.dylib`), con una tabla de
+  punteros a función en `include/portus_native.h`
+  (`struct portus_tls_ops`, `portus_tls_load`, `portus_native_tls_available`).
+  Si no hay OpenSSL, el servidor arranca en claro. Spike verificado: un
+  consumidor con `psc add` imprime `tls=1` sin enlazar nada. El siguiente paso
+  es el handshake no bloqueante (`SSL_accept`/`SSL_read`/`SSL_write` con
+  `WANT_READ`/`WANT_WRITE`) dentro del `poll(2)`, y `ServeOptions.cert_file` /
+  `key_file`.
 - Requisito de compilador: **PenguScript ≥ 0.29.1**. 0.29.0 rompía `psc test`
   en la std (`if` en posición de valor, genéricas inferidas y literales de
   omen); la 0.29.1 los arregla (ver `scratch/portus-compiler-fixes.md`,
