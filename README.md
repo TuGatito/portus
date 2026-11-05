@@ -12,8 +12,9 @@ sesiones firmadas.
 - **Memoria explícita**: `Application` y los cuerpos son tuyos; el contexto
   presta sus cadenas. Todo está documentado en la API (`psc doc`).
 
-Requiere **PenguScript 0.28.9 o superior** (portus arregló varios bugs del
-compilador que necesitaba; ver [`scratch/portus-compiler-fixes.md`](scratch/portus-compiler-fixes.md)).
+Requiere **PenguScript 0.29.1 o superior** (portus encontró y arregló los bugs
+del compilador que necesitaba; ver
+[`scratch/portus-compiler-fixes.md`](scratch/portus-compiler-fixes.md)).
 
 ## Instalación
 
